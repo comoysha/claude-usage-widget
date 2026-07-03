@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+
+# Runtime / generated data (may contain credentials or account info)
+.org.json
+.last_attempt
+last_fetch.json
+usage_raw.json
+window_state.json
+window_log.jsonl
+window_log.md
+
+# Generated images
+*.png
+
+# Logs
+*.log
+render.err
+
+# Environment / secrets
+.env
+.env.*
+*.local
