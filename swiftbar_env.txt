@@ -1,0 +1,6 @@
+PATH=/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/Apple/usr/bin:/Users/xiayue/.local/bin:/Users/xiayue/.opencode/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/Users/xiayue/.npm-global/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/xiayue/platform-tools:/Users/xiayue/.nvm/versions/node/v25.5.0/bin:/Users/xiayue/.bun/bin:/Users/xiayue/Library/pnpm:/Users/xiayue/.claude/plugins/cache/claude-code-warp/warp/2.0.0/bin:/Users/xiayue/Library/Application Support/Claude/local-agent-mode-sessions/0e8ff033-4e39-42d9-b403-e3961118dd9a/d73c6694-1792-408d-ada6-6a1f87aa03de/rpm/plugin_01VUWKAs3gYLNqeKbDtxv1Xs/bin:/Users/xiayue/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/d73c6694-1792-408d-ada6-6a1f87aa03de/0e8ff033-4e39-42d9-b403-e3961118dd9a/bin
+SHELL=/bin/zsh
+PWD=/
+which python3=/usr/local/bin/python3
+which open=/usr/bin/open
+USER=xiayue HOME=/Users/xiayue

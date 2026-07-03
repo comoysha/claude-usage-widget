@@ -111,7 +111,7 @@ def muted(title, detail):
     print("%s | color=#8E8E93" % title)
     print("---")
     print("%s | color=#8E8E93" % detail)
-    print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=false" % HERE)
+    print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 
 
 def main():
@@ -148,7 +148,7 @@ def main():
     print("---")
     print("| image=%s" % b64(pn))
     print("---")
-    print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=false" % HERE)
+    print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 
 
 if __name__ == "__main__":
