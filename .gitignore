@@ -30,3 +30,7 @@ render.err
 .env
 .env.*
 *.local
+
+# Transient debug/probe output
+swiftbar_env.txt
+swiftbar_probe.txt
