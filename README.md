@@ -1,23 +1,37 @@
-# Claude Usage Widget
+# Claude Code + Codex Usage Widget
 
 一个 macOS 菜单栏小组件（基于 [SwiftBar](https://github.com/swiftbar/SwiftBar)），
-显示 Claude 的**官方用量**——和你在 Claude 里看到的 `/usage` 数字一致——并把
+在同一个 SwiftBar 入口中分区显示 **Claude Code** 与 **Codex** 的官方用量，并把
 「已用用量%」和「已过时间%」并排对比，帮你判断烧钱节奏。同时把每个窗口终点时的
 用量记进日志。
 
-菜单栏图标为两行：**时间% / 用量%**；点开是一个 iOS 风格的面板，含两条圆角进度条
-（5 小时窗口 + 7 天窗口）、节奏判断和重置倒计时。
+菜单栏图标为两列（`C` = Claude Code，`X` = Codex），每列两行：**时间% / 用量%**；
+点开后是两个独立的 iOS 风格面板：Claude Code 保留 5 小时与 7 天窗口；当前 Codex
+账户只提供 7 天窗口，因此 Codex 面板只展示 7 天额度、节奏判断和重置倒计时。
 
 ## 工作原理
 
 SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-usage.5m.sh)
 （**SwiftBar 本身就是调度器**——间隔写在文件名的 `.5m.` 里，没有用 launchd/cron），它：
 
-1. 跑 [`fetch_usage.py`](fetch_usage.py) 抓官方用量，输出写进 `last_fetch.json`；
-2. 跑 [`render.py`](render.py)，读 `last_fetch.json` 生成 SwiftBar 菜单栏标记。
+1. 跑 [`fetch_usage.py`](fetch_usage.py) 抓 Claude 官方用量，写入 `last_fetch.json`；
+2. 跑 [`fetch_codex_usage.py`](fetch_codex_usage.py) 读取 Codex 官方限额快照，写入
+   `codex_last_fetch.json`；
+3. 跑 [`render.py`](render.py)，把两份数据生成同一个 SwiftBar 菜栏入口与两个分区。
 
 时间% 由 `render.py` 在每个 tick 本地重算，倒计时随之更新，因此显示始终是「活」的，
 不必每 tick 都打接口。
+
+### Codex 数据来源
+
+本工具优先通过 Codex 自带的 app-server 只读方法 `account/rateLimits/read` 获取最新限额；
+若 app-server 不可用，则降级读取 `~/.codex/sessions/**/*.jsonl` 的 `token_count` 事件。
+它只保留 `rate_limits` 字段，识别 10080 分钟周窗口；不读取
+`~/.codex/auth.json`，也不复制登录凭据。
+
+Codex 面板通常每 5 分钟从 app-server 更新；降级到 JSONL 时，则会在 Codex 完成请求并
+写出新事件后更新。JSONL 同时包含对话内容，脚本只保留命中的限额对象，绝不会缓存或
+打印完整事件行。
 
 ### 凭据模型（重要）
 
@@ -27,7 +41,7 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
 
 1. 从 Desktop 的 Chromium cookie 库
    （`~/Library/Application Support/Claude/Cookies`）读出 `.claude.ai` 的
-   **`sessionKey`** cookie（加密存储）。
+   **`sessionKey`** cookie（加密存储）。这仅用于 Claude 分区。
 2. 用钥匙串里的 **`Claude Safe Storage`** 密钥解密（Chromium `v10` 方案：
    PBKDF2-HMAC-SHA1(key, salt=`saltysalt`, 1003 轮, 16 字节) → AES-128-CBC，
    IV=16 个空格，去掉 `v10` 前缀与 PKCS7 padding，再剥掉新版 Chromium 在明文前
@@ -101,7 +115,7 @@ token 有空档，恢复后也会按墙钟补记，记录不丢。仍然**每个
 | `window_log.md` | 人看的 Markdown 表格，每次窗口关闭时从 JSONL 重新渲染 |
 
 `window_log.md` 每个窗口一张表，列含：**日期 / 窗口起点 / 窗口终点（首尾）/ 终点用量%**，
-时间为本地时区。
+时间固定为北京时间（Asia/Shanghai, UTC+8）。
 
 手动更新 / 重新生成 MD：
 
@@ -117,7 +131,8 @@ python3 window_log.py
 3. 把本目录放在 `~/claude-usage-widget`（脚本按此路径寻址）
 4. 在 SwiftBar 里把插件目录指向 `plugins/`，或把
    [`claude-usage.5m.sh`](plugins/claude-usage.5m.sh) 软链进你的 SwiftBar 插件目录
-5. **确保 Claude Desktop 已登录**（cookie 库里有 `sessionKey`）——这是数据来源
+5. **确保 Claude Desktop 已登录**（Claude 分区的数据来源），并至少在 Codex 中完成过
+   一次请求（Codex 分区才会产生本地限额快照）
 
 ## 文件一览
 
@@ -125,12 +140,14 @@ python3 window_log.py
 | --- | --- |
 | `plugins/claude-usage.5m.sh` | SwiftBar 入口，每 5 分钟 tick |
 | `fetch_usage.py` | 解密 Desktop cookie，调 claude.ai 用量接口；限流节流 |
-| `render.py` | 读缓存，生成菜单栏 + 面板的 SwiftBar 标记 |
+| `fetch_codex_usage.py` | 只读 Codex 本地会话中的官方限额快照，不读取凭据 |
+| `render.py` | 读两侧缓存，生成共用菜单栏 + 两个独立面板 |
 | `imggen.py` | 把菜单栏图标与面板画成 iOS 风格 PNG（2x 视网膜）|
 | `window_log.py` | 记录每个窗口终点用量，输出 JSONL + MD 日志 |
 | `diag.py` | 只读排错工具（不打印任何密钥）|
 | `usage_raw.json` | 上次成功的用量数据（缓存 / 降级用）|
 | `last_fetch.json` | 本次 tick 的抓取结果（成功数据或错误）|
+| `codex_last_fetch.json` | 本次 tick 读取到的 Codex 限额快照或错误 |
 | `.org.json` | 缓存的聊天组织 UUID（非机密）|
 | `.last_attempt` | 节流触碰文件，把真实请求限到每 5 分钟一次 |
 | `window_log.jsonl` / `window_log.md` | 窗口终点用量日志（原始 / 人看）|
@@ -142,3 +159,4 @@ python3 window_log.py
   也不碰 Claude Code CLI 的钥匙串条目。
 - sessionKey 每次现解现用，**不落明文**、不打印。
 - `.org.json` 只存组织 UUID（标识符，非机密）。
+- Codex 分区不读取 `~/.codex/auth.json`；仅从会话 JSONL 中抽取限额字段，不保留对话。

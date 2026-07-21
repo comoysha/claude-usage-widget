@@ -14,8 +14,11 @@ LOG="$DIR/force_refresh.log"
 
 python3 "$DIR/fetch_usage.py" --force 2>>"$LOG" > "$DIR/last_fetch.json"
 rc=$?
+python3 "$DIR/fetch_codex_usage.py" 2>>"$LOG" > "$DIR/codex_last_fetch.json"
+codex_rc=$?
 # Heartbeat so a click always leaves a trace (helps diagnose if it ever misbehaves again).
-echo "$(date '+%F %T') force_refresh rc=$rc bytes=$(wc -c < "$DIR/last_fetch.json" | tr -d ' ')" >> "$LOG"
+echo "$(TZ=Asia/Shanghai date '+%F %T %Z') force_refresh claude_rc=$rc codex_rc=$codex_rc bytes=$(wc -c < "$DIR/last_fetch.json" | tr -d ' ')" >> "$LOG"
 # Keep the log from growing without bound.
 tail -n 50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
-exit "$rc"
+# Either side may be temporarily unavailable; SwiftBar should still render the other.
+exit 0

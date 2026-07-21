@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 # falls back to the last successful cache if the tick file is missing.
 RAW = HERE / "last_fetch.json"
 CACHE = HERE / "usage_raw.json"
+CODEX_RAW = HERE / "codex_last_fetch.json"
 WINDOW_S = 5 * 3600
 SEVEN_S = 7 * 86400
 
@@ -114,6 +115,26 @@ def muted(title, detail):
     print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 
 
+def codex_windows(data):
+    if not isinstance(data, dict) or data.get("error"):
+        return None
+    limits = data.get("rate_limits")
+    if not isinstance(limits, dict):
+        return None
+    windows = {}
+    def convert(name):
+        block = limits.get(name)
+        if not isinstance(block, dict):
+            return
+        minutes = block.get("window_minutes")
+        if minutes:
+            windows[int(minutes)] = (pct_of(block.get("used_percent")),
+                                     parse_time(block.get("resets_at")), int(minutes))
+    convert("primary")
+    convert("secondary")
+    return windows
+
+
 def main():
     try:
         data = json.loads(RAW.read_text())
@@ -141,14 +162,36 @@ def main():
     seven = window_stats(sd_used, sd_reset, SEVEN_S, now)
 
     time_pct = five["time"]
-    mb = imggen.menubar_icon(used, time_pct)
-    pn = imggen.panel(five, seven)
+    try:
+        codex_data = json.loads(CODEX_RAW.read_text())
+    except Exception:
+        codex_data = None
+    cw = codex_windows(codex_data)
+    codex_seven = None
+    if cw is not None:
+        su, sr, sm = cw.get(10080, (None, None, 10080))
+        codex_seven = window_stats(su, sr, sm * 60, now)
+
+    mb = imggen.combined_menubar_icon(
+        (five["used"], five["time"]),
+        (seven["used"], seven["time"]),
+        ((codex_seven or {}).get("used"), (codex_seven or {}).get("time")),
+    )
+    claude_panel = imggen.panel(five, seven, "Claude Code", "claude_panel.png")
 
     print(" | image=%s" % b64(mb))
     print("---")
-    print("| image=%s" % b64(pn))
+    print("| image=%s" % b64(claude_panel))
     print("---")
-    print("立即刷新（强制调接口）| bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
+    if codex_seven:
+        codex_panel = imggen.panel(None, codex_seven, "Codex", "codex_panel.png", only_weekly=True)
+        print("| image=%s" % b64(codex_panel))
+    else:
+        detail = (codex_data or {}).get("error", "还没有本地用量快照") if isinstance(codex_data, dict) else "还没有本地用量快照"
+        print("Codex · 无数据 | color=#8E8E93")
+        print("--%s | color=#8E8E93" % str(detail)[:100])
+    print("---")
+    print("立即刷新 | bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 
 
 if __name__ == "__main__":

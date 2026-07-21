@@ -20,13 +20,15 @@ Missing/partial data is ignored rather than corrupting the log.
 """
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 HERE = Path(__file__).resolve().parent
 STATE = HERE / "window_state.json"
 LOG = HERE / "window_log.jsonl"
 MD = HERE / "window_log.md"
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 # The window kinds we track: block names in the payload + span + display label.
 KINDS = {
@@ -37,7 +39,7 @@ KINDS = {
 
 def _iso(epoch=None):
     ts = time.time() if epoch is None else epoch
-    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, SHANGHAI).isoformat()
 
 
 def _pct(v):
@@ -101,7 +103,7 @@ def _fmt_local(dt):
     """ISO datetime (UTC-aware) → local 'YYYY-MM-DD HH:MM'. '—' if unparseable."""
     if dt is None:
         return "—"
-    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    return dt.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M")
 
 
 def render_md():
@@ -122,7 +124,7 @@ def render_md():
         pass
 
     out = ["# 用量窗口日志", "",
-           "每个窗口终点（重置时刻）的用量百分比。时间为本地时区。", ""]
+           "每个窗口终点（重置时刻）的用量百分比。时间为北京时间（Asia/Shanghai, UTC+8）。", ""]
     for kind, cfg in KINDS.items():
         out.append(f"## {cfg['label']}")
         out.append("")
@@ -137,7 +139,7 @@ def render_md():
             if end is not None:
                 from datetime import timedelta
                 start = end - timedelta(seconds=cfg["span"])
-            date = end.astimezone().strftime("%Y-%m-%d") if end else "—"
+            date = end.astimezone(SHANGHAI).strftime("%Y-%m-%d") if end else "—"
             util = e.get("end_util")
             util_s = f"{util:g}%" if isinstance(util, (int, float)) else "—"
             out.append(f"| {date} | {_fmt_local(start)} | {_fmt_local(end)} | {util_s} |")

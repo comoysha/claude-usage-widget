@@ -14,6 +14,7 @@ env/
 .org.json
 .last_attempt
 last_fetch.json
+codex_last_fetch.json
 usage_raw.json
 window_state.json
 window_log.jsonl

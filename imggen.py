@@ -73,7 +73,7 @@ def _rounded_bar(draw, box, pct, fill, track=TRACK, radius=None):
         draw.rounded_rectangle((x0, y0, x0 + max(fw, 2), y1), radius=min(r, fw // 2 or 1), fill=fill)
 
 
-def menubar_icon(used, time_pct):
+def menubar_icon(used, time_pct, output="menubar.png"):
     """Two stacked rows: line1 = time%, line2 = usage(token)%. Returns PNG path.
 
     Saved @2x (dpi 144) so SwiftBar renders it crisp at ~22pt menubar height.
@@ -109,12 +109,39 @@ def menubar_icon(used, time_pct):
     d.text((lab_x, base2), "用", font=flab, fill=MB_NEUTRAL, anchor="ls")
     d.text((num_x, base2), u_txt, font=fnum, fill=col, anchor="ls")
 
+    out = HERE / output
+    img.save(out, dpi=DPI)
+    return out
+
+
+def combined_menubar_icon(claude_five, claude_seven, codex_weekly):
+    """Three compact window columns, each with time% on row one and usage% on row two."""
+    S = 2
+    font = _font(F_CJK, 7 * S, index=CJK_W6)
+    rows = [("C5h", claude_five), ("C7d", claude_seven), ("X7d", codex_weekly)]
+    W, H = 111 * S, 22 * S
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # Dashed separators keep the three windows visually distinct without adding
+    # much weight to the compact menubar icon.
+    for sep_x in (37 * S, 74 * S):
+        for y in range(2 * S, 22 * S, 5 * S):
+            d.line((sep_x, y, sep_x, min(y + 2 * S, 21 * S)),
+                   fill=MB_NEUTRAL, width=S)
+    for i, (name, stats) in enumerate(rows):
+        used, elapsed = stats
+        x = (3 + i * 37) * S
+        elapsed_txt = "--" if elapsed is None else "%d%%" % round(elapsed)
+        used_txt = "--" if used is None else "%d%%" % round(used)
+        col = pace_color(used or 0, elapsed)
+        d.text((x, 8 * S), name + " " + elapsed_txt, font=font, fill=MB_NEUTRAL, anchor="ls")
+        d.text((x, 20 * S), name + " " + used_txt, font=font, fill=col, anchor="ls")
     out = HERE / "menubar.png"
     img.save(out, dpi=DPI)
     return out
 
 
-def panel(five, seven):
+def panel(five, seven, service=None, output="panel.png", only_weekly=False):
     """iOS-style panel with two window sections, each with 时间 / 用量 bars
     and its own pace verdict, separated by a hairline divider.
 
@@ -135,7 +162,8 @@ def panel(five, seven):
     # per-section vertical budget: header + two bar rows + verdict line
     sec_h = 22 * S + row_dy + 6 * S + bar_h + 20 * S
     gap = 34 * S               # space between the two sections (holds a divider)
-    H = pad + 6 * S + sec_h + gap + sec_h + pad
+    title_h = 28 * S if service else 0
+    H = pad + 6 * S + title_h + (sec_h if only_weekly else sec_h + gap + sec_h) + pad
     img = Image.new("RGBA", (int(W), int(H)), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
@@ -162,11 +190,17 @@ def panel(five, seven):
         return y_top + sec_h
 
     y = pad + 6 * S
-    y = section(y, "5 小时窗口", five)
-    # hairline divider centered in the gap between the two sections
-    div_y = y + gap // 2
-    d.line((pad, div_y, W - pad, div_y), fill=(198, 198, 200, 255), width=S)
-    section(y + gap, "7 天窗口", seven)
+    if service:
+        d.text((pad, y), service, font=fw_sec, fill=INK, anchor="ls")
+        y += title_h
+    if only_weekly:
+        section(y, "7 天窗口", seven)
+    else:
+        y = section(y, "5 小时窗口", five)
+        # hairline divider centered in the gap between the two sections
+        div_y = y + gap // 2
+        d.line((pad, div_y, W - pad, div_y), fill=(198, 198, 200, 255), width=S)
+        section(y + gap, "7 天窗口", seven)
 
     # crop to actual content + margins. SwiftBar's dropdown reserves space on
     # the RIGHT of every row for the "SwiftBar ›" disclosure arrow, which makes
@@ -186,7 +220,7 @@ def panel(five, seven):
             canvas.paste(img, (pad_l, 0))
             img = canvas
 
-    out = HERE / "panel.png"
+    out = HERE / output
     img.save(out, dpi=DPI)
     return out
 
