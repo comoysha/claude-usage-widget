@@ -128,7 +128,15 @@ def codex_windows(data):
             return
         minutes = block.get("window_minutes")
         if minutes:
-            windows[int(minutes)] = (pct_of(block.get("used_percent")),
+            # Codex app-server reports usedPercent as 0..100 (1 means 1%),
+            # while Claude's API may report utilization as 0..1. Do not use
+            # pct_of() here: its fraction heuristic turns exactly 1 into 100.
+            used = block.get("used_percent")
+            try:
+                used = max(0.0, min(100.0, float(used))) if used is not None else None
+            except (TypeError, ValueError):
+                used = None
+            windows[int(minutes)] = (used,
                                      parse_time(block.get("resets_at")), int(minutes))
     convert("primary")
     convert("secondary")

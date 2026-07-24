@@ -29,7 +29,8 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
 它只保留 `rate_limits` 字段，识别 10080 分钟周窗口；不读取
 `~/.codex/auth.json`，也不复制登录凭据。
 
-Codex 面板通常每 5 分钟从 app-server 更新；降级到 JSONL 时，则会在 Codex 完成请求并
+Codex 面板通常每 5 分钟从 app-server 更新；`usedPercent` 按官方字段语义直接解释为百分比数值
+（例如 `1` = `1%`，不是 `100%`）；降级到 JSONL 时，则会在 Codex 完成请求并
 写出新事件后更新。JSONL 同时包含对话内容，脚本只保留命中的限额对象，绝不会缓存或
 打印完整事件行。
 
@@ -60,6 +61,7 @@ sessionKey 每次抓取都现解现用，不落明文；**不做任何 token 刷
 - `fetch_usage.py` 用 `.last_attempt` 触碰文件把真实请求节流到 **每 5 分钟一次**，
   其余 tick 复用上次成功的数据（`usage_raw.json`）。
 - 任何瞬时错误（离线、cookie 暂时读不到等）都保留上次好数据继续显示，菜单栏不会挂。
+- 刷新日志中的时间固定标记为 `Asia/Shanghai (UTC+8)`。
 
 ## 演进史（Before → After）
 

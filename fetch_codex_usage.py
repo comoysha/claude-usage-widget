@@ -46,6 +46,8 @@ def _normalize_bucket(bucket):
     def window(value):
         if not isinstance(value, dict):
             return None
+        # Codex app-server's usedPercent is already a percentage number:
+        # 1 means 1%, unlike Claude's usage API which may return 0..1.
         return {"used_percent": value.get("usedPercent"),
                 "window_minutes": value.get("windowDurationMins"),
                 "resets_at": value.get("resetsAt")}
