@@ -24,8 +24,9 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
 
 ### Codex 数据来源
 
-本工具优先通过 Codex 自带的 app-server 只读方法 `account/rateLimits/read` 获取最新限额；
-若 app-server 不可用，则降级读取 `~/.codex/sessions/**/*.jsonl` 的 `token_count` 事件。
+本工具优先通过 Codex 官方 app-server 的只读方法 `account/rateLimits/read` 获取账号级限额；
+只有官方接口不可用时，才降级读取 `~/.codex/sessions/**/*.jsonl` 的 `token_count` 事件，
+该降级数据可能是模型级限额，不保证与官方账号页面一致。
 它只保留 `rate_limits` 字段，识别 10080 分钟周窗口；不读取
 `~/.codex/auth.json`，也不复制登录凭据。
 
@@ -33,6 +34,9 @@ Codex 面板通常每 5 分钟从 app-server 更新；`usedPercent` 按官方字
 （例如 `1` = `1%`，不是 `100%`）；降级到 JSONL 时，则会在 Codex 完成请求并
 写出新事件后更新。JSONL 同时包含对话内容，脚本只保留命中的限额对象，绝不会缓存或
 打印完整事件行。
+
+Codex 的 `limit_id` 可能随账户或模型限额桶变化（例如 `codex_bengalfox`），因此降级
+读取 JSONL 时按时间选择最新的限额事件，不固定使用某个旧的 `limit_id`。
 
 ### 凭据模型（重要）
 

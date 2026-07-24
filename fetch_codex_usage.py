@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read Codex rate limits from its app-server, with local session logs as fallback.
+"""Read Codex account rate limits from its official app-server API.
 
 Codex writes ``token_count`` events containing ``rate_limits`` to
 ``~/.codex/sessions/**/*.jsonl``. This reader is local-only: it never reads auth.json,
@@ -8,6 +8,7 @@ never prints tokens, and makes no network request.
 import json
 import os
 import selectors
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -16,9 +17,8 @@ from zoneinfo import ZoneInfo
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 SESSIONS = CODEX_HOME / "sessions"
-PREFERRED_LIMIT_ID = "codex"
 MAX_FILES = 40
-APP_CODEX = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+CODEX_BIN = shutil.which("codex") or "/usr/local/bin/codex"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -58,9 +58,7 @@ def _normalize_bucket(bucket):
 
 
 def app_server_snapshot():
-    if not APP_CODEX.is_file():
-        raise RuntimeError("找不到 Codex app-server")
-    proc = subprocess.Popen([str(APP_CODEX), "app-server", "--stdio"], stdin=subprocess.PIPE,
+    proc = subprocess.Popen([CODEX_BIN, "app-server", "--stdio"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
     try:
         init = {"method": "initialize", "id": 1, "params": {"clientInfo": {
@@ -74,8 +72,17 @@ def app_server_snapshot():
         proc.stdin.flush()
         response = _read_response(proc, 2)
         result = response.get("result") or {}
-        buckets = result.get("rateLimitsByLimitId") or {}
-        bucket = buckets.get(PREFERRED_LIMIT_ID) or result.get("rateLimits")
+        # This is the account-level object returned by the official method.
+        # Older servers exposed it as rateLimits; newer ones may additionally
+        # expose named buckets, where the bucket with a weekly secondary limit
+        # is the closest equivalent.
+        bucket = result.get("rateLimits")
+        if not isinstance(bucket, dict):
+            buckets = result.get("rateLimitsByLimitId") or {}
+            bucket = next((b for b in buckets.values() if isinstance(b, dict)
+                           and isinstance(b.get("secondary"), dict)
+                           and b["secondary"].get("windowDurationMins") == 10080), None)
+            bucket = bucket or next((b for b in buckets.values() if isinstance(b, dict)), None)
         if not isinstance(bucket, dict):
             raise RuntimeError("Codex app-server 未返回限额")
         return {"observed_at": datetime.now(SHANGHAI).isoformat(),
@@ -104,10 +111,10 @@ def _candidate_files():
 
 
 def latest_snapshot():
-    best = None
-    best_ts = 0.0
-    fallback = None
-    fallback_ts = 0.0
+    # Codex can rotate the limit id when the account/model bucket changes.
+    # Always use the newest event so an older bucket cannot mask the active one.
+    latest = None
+    latest_ts = 0.0
     for path in _candidate_files():
         try:
             with path.open(errors="replace") as fh:
@@ -123,18 +130,15 @@ def latest_snapshot():
                         ts = _timestamp(event.get("timestamp"))
                         item = {"observed_at": event.get("timestamp"), "source": "session-log",
                                 "rate_limits": limits}
-                        if ts > fallback_ts:
-                            fallback, fallback_ts = item, ts
-                        if limits.get("limit_id") == PREFERRED_LIMIT_ID and ts > best_ts:
-                            best, best_ts = item, ts
+                        if ts > latest_ts:
+                            latest, latest_ts = item, ts
                     except Exception:
                         continue
         except (OSError, PermissionError):
             continue
-    result = best or fallback
-    if result is None:
+    if latest is None:
         raise RuntimeError("未找到 Codex 用量快照；先在 Codex 中完成一次请求")
-    return result
+    return latest
 
 
 if __name__ == "__main__":
