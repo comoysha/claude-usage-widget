@@ -135,11 +135,28 @@ def recently_tried():
         return False
 
 
+def _is_usable_usage(data):
+    """True when the payload contains a renderable five-hour window."""
+    if not isinstance(data, dict) or data.get("error"):
+        return False
+    block = data.get("five_hour")
+    if not isinstance(block, dict):
+        return False
+    for key in ("utilization", "used_pct", "usedPercent", "percent_used", "usage"):
+        if block.get(key) is not None:
+            try:
+                float(block[key])
+                return True
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
 def _last_good():
     """Last successful usage payload, regardless of age (graceful degradation)."""
     try:
         j = json.loads(RAW.read_text())
-        return j if isinstance(j, dict) and "five_hour" in j and not j.get("error") else None
+        return j if _is_usable_usage(j) else None
     except Exception:
         return None
 
@@ -156,7 +173,7 @@ def fetch_usage(force=False):
     org = get_org(cookie)
     j = call_usage(cookie, org)
     # cache ONLY on a fresh success — restarts the throttle window
-    if isinstance(j, dict) and "five_hour" in j and not j.get("error"):
+    if _is_usable_usage(j):
         RAW.write_text(json.dumps(j, indent=2))
         # Track window rollovers / log end-of-window utilization. Never let a logging
         # hiccup break the usage fetch itself.
@@ -172,19 +189,14 @@ if __name__ == "__main__":
     force = "--force" in sys.argv[1:]
     try:
         data = fetch_usage(force=force)
-        if isinstance(data, dict) and "five_hour" in data and not data.get("error"):
+        if _is_usable_usage(data):
             print(json.dumps(data, indent=2))
         else:
-            prev = _last_good()
-            if prev is not None:
-                print(json.dumps(prev, indent=2))
-            else:
-                print(json.dumps(data if isinstance(data, dict) else {"error": str(data)}))
-                sys.exit(1)
-    except Exception as e:
-        prev = _last_good()
-        if prev is not None:
-            print(json.dumps(prev, indent=2))
-        else:
-            print(json.dumps({"error": str(e)}))
+            # last_fetch.json represents this tick, not the last successful tick.
+            # Surface an unusable live response so render.py can show the Claude-only
+            # re-login state while preserving the independently fetched Codex panel.
+            print(json.dumps(data if isinstance(data, dict) else {"error": str(data)}))
             sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)

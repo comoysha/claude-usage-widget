@@ -114,17 +114,20 @@ def menubar_icon(used, time_pct, output="menubar.png"):
     return out
 
 
-def combined_menubar_icon(claude_five, claude_seven, codex_weekly):
-    """Three compact window columns, each with time% on row one and usage% on row two."""
+def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=True):
+    """Compact usage columns; hide Claude columns while Claude is unavailable."""
     S = 2
     font = _font(F_CJK, 7 * S, index=CJK_W6)
-    rows = [("C5h", claude_five), ("C7d", claude_seven), ("X7d", codex_weekly)]
-    W, H = 111 * S, 22 * S
+    if show_claude:
+        rows = [("C5h", claude_five), ("C7d", claude_seven), ("X7d", codex_weekly)]
+    else:
+        rows = [("X7d", codex_weekly)]
+    W, H = len(rows) * 37 * S, 22 * S
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     # Dashed separators keep the three windows visually distinct without adding
     # much weight to the compact menubar icon.
-    for sep_x in (37 * S, 74 * S):
+    for sep_x in (i * 37 * S for i in range(1, len(rows))):
         for y in range(2 * S, 22 * S, 5 * S):
             d.line((sep_x, y, sep_x, min(y + 2 * S, 21 * S)),
                    fill=MB_NEUTRAL, width=S)

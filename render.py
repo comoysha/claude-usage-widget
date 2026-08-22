@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import imggen
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 # latest fetch result (usage payload on success, {"error":...} on failure);
@@ -55,7 +56,11 @@ def find_window(data, names):
     used = None
     for k in ("utilization", "used_pct", "usedPercent", "percent_used", "usage"):
         if k in blk:
-            used = pct_of(blk[k]); break
+            try:
+                used = pct_of(blk[k])
+            except (TypeError, ValueError):
+                used = None
+            break
     reset = None
     for k in ("resets_at", "resetsAt", "reset_at", "resetAt"):
         if k in blk:
@@ -108,6 +113,17 @@ def b64(path):
     return base64.b64encode(Path(path).read_bytes()).decode()
 
 
+def panel_image_line(path):
+    """Render a Retina panel at its intended point size in SwiftBar 2.1+."""
+    with Image.open(path) as image:
+        dpi = image.info.get("dpi", (144, 144))
+        dpi_x = dpi[0] or 144
+        dpi_y = dpi[1] or 144
+        width = image.width * 72 / dpi_x
+        height = image.height * 72 / dpi_y
+    return "| image=%s width=%.1f height=%.1f" % (b64(path), width, height)
+
+
 def muted(title, detail):
     print("%s | color=#8E8E93" % title)
     print("---")
@@ -150,26 +166,17 @@ def main():
         try:
             data = json.loads(CACHE.read_text())
         except Exception:
-            return muted("Claude ·无数据", "还没抓到用量数据")
-
-    if isinstance(data, dict) and data.get("error"):
-        err = str(data["error"])
-        short = ("限流冷却" if "rate_limit" in err
-                 else "需重登" if "需重登" in err or "401" in err or "auth" in err.lower()
-                 else "离线")
-        return muted("Claude ·" + short, ("错误: " + err)[:120])
+            data = None
 
     used, reset = find_window(data, ("five_hour", "fiveHour"))
-    if used is None:
-        keys = ", ".join(list(data.keys())[:8]) if isinstance(data, dict) else "?"
-        return muted("Claude ·待确认字段", "顶层键: " + keys)
-
     now = time.time()
-    five = window_stats(used, reset, WINDOW_S, now)
+    claude_available = used is not None and not (
+        isinstance(data, dict) and data.get("error")
+    )
+    five = window_stats(used, reset, WINDOW_S, now) if claude_available else None
     sd_used, sd_reset = find_window(data, ("seven_day", "sevenDay"))
-    seven = window_stats(sd_used, sd_reset, SEVEN_S, now)
+    seven = window_stats(sd_used, sd_reset, SEVEN_S, now) if claude_available else None
 
-    time_pct = five["time"]
     try:
         codex_data = json.loads(CODEX_RAW.read_text())
     except Exception:
@@ -181,19 +188,23 @@ def main():
         codex_seven = window_stats(su, sr, sm * 60, now)
 
     mb = imggen.combined_menubar_icon(
-        (five["used"], five["time"]),
-        (seven["used"], seven["time"]),
+        ((five or {}).get("used"), (five or {}).get("time")),
+        ((seven or {}).get("used"), (seven or {}).get("time")),
         ((codex_seven or {}).get("used"), (codex_seven or {}).get("time")),
+        show_claude=claude_available,
     )
-    claude_panel = imggen.panel(five, seven, "Claude Code", "claude_panel.png")
 
     print(" | image=%s" % b64(mb))
     print("---")
-    print("| image=%s" % b64(claude_panel))
+    if claude_available:
+        claude_panel = imggen.panel(five, seven, "Claude Code", "claude_panel.png")
+        print(panel_image_line(claude_panel))
+    else:
+        print("Claude Code · 重新登录 | color=#8E8E93")
     print("---")
     if codex_seven:
         codex_panel = imggen.panel(None, codex_seven, "Codex", "codex_panel.png", only_weekly=True)
-        print("| image=%s" % b64(codex_panel))
+        print(panel_image_line(codex_panel))
     else:
         detail = (codex_data or {}).get("error", "还没有本地用量快照") if isinstance(codex_data, dict) else "还没有本地用量快照"
         print("Codex · 无数据 | color=#8E8E93")
