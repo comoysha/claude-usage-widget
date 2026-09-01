@@ -45,8 +45,8 @@ def _iso(epoch=None):
 def _pct(v):
     if v is None:
         return None
-    v = float(v)
-    return v * 100 if v <= 1.0 else v
+    # Claude utilization is already expressed in percentage points.
+    return max(0.0, min(100.0, float(v)))
 
 
 def _extract(data, names):

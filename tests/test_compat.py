@@ -9,6 +9,7 @@ from unittest import mock
 import fetch_usage
 import imggen
 import render
+import window_log
 from PIL import Image
 
 
@@ -35,8 +36,84 @@ class ClaudePayloadTests(unittest.TestCase):
             )
         )
 
+    @mock.patch.object(fetch_usage.time, "sleep")
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_curl_json_retries_transient_non_json_response(self, run, sleep):
+        run.side_effect = [
+            mock.Mock(stdout="<html>302 Found</html>", stderr="", returncode=0),
+            mock.Mock(stdout='{"five_hour": {"utilization": 25}}', stderr="", returncode=0),
+        ]
+
+        result = fetch_usage.curl_json("https://example.test/usage", "secret")
+
+        self.assertEqual(25, result["five_hour"]["utilization"])
+        self.assertEqual(2, run.call_count)
+        sleep.assert_called_once_with(fetch_usage.RETRY_DELAYS_S[0])
+
+    @mock.patch.object(fetch_usage.time, "sleep")
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_curl_json_reports_failure_after_bounded_retries(self, run, sleep):
+        run.return_value = mock.Mock(
+            stdout="<html>302 Found</html>", stderr="", returncode=0
+        )
+
+        with self.assertRaisesRegex(fetch_usage.TransientFetchError, "连续 3 次非 JSON 响应"):
+            fetch_usage.curl_json("https://example.test/usage", "secret")
+
+        self.assertEqual(fetch_usage.REQUEST_ATTEMPTS, run.call_count)
+        self.assertEqual(
+            [mock.call(3), mock.call(10)], sleep.call_args_list
+        )
+
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_curl_json_does_not_retry_explicit_auth_failure(self, run):
+        run.return_value = mock.Mock(
+            stdout=f'not authorized\n{fetch_usage.STATUS_MARKER}401',
+            stderr="",
+            returncode=0,
+        )
+
+        with self.assertRaisesRegex(fetch_usage.AuthenticationError, "HTTP 401"):
+            fetch_usage.curl_json("https://example.test/usage", "secret")
+
+        run.assert_called_once()
+
+    def test_transient_failure_reuses_last_good_payload(self):
+        cached = {"five_hour": {"utilization": 21}}
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(fetch_usage, "STAMP", Path(tmp) / ".last_attempt"),
+                mock.patch.object(fetch_usage, "recently_tried", return_value=False),
+                mock.patch.object(fetch_usage, "get_session_key", return_value="secret"),
+                mock.patch.object(
+                    fetch_usage, "get_org", side_effect=fetch_usage.TransientFetchError("302")
+                ),
+                mock.patch.object(fetch_usage, "_last_good", return_value=cached),
+            ):
+                self.assertEqual(cached, fetch_usage.fetch_usage())
+
 
 class RenderCompatibilityTests(unittest.TestCase):
+    def test_claude_utilization_is_already_percentage_points(self):
+        for percentage in (0, 0.5, 1.0, 2, 100):
+            with self.subTest(percentage=percentage):
+                payload = {
+                    "five_hour": {
+                        "utilization": percentage,
+                        "resets_at": "2026-09-02T02:49:59+00:00",
+                    }
+                }
+
+                used, _ = render.find_window(
+                    payload, ("five_hour", "fiveHour")
+                )
+                logged, _ = window_log._extract(
+                    payload, ("five_hour", "fiveHour")
+                )
+
+                self.assertEqual(float(percentage), used)
+                self.assertEqual(float(percentage), logged)
+
     def test_claude_failure_keeps_codex_panel(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

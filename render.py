@@ -26,8 +26,10 @@ SEVEN_S = 7 * 86400
 def pct_of(v):
     if v is None:
         return None
-    v = float(v)
-    return v * 100 if v <= 1.0 else v
+    # Claude's usage endpoint reports utilization in percentage points:
+    # 1.0 means 1%, not a 0..1 fraction. The old fraction heuristic turned
+    # exactly 1% into 100% and made the widget disagree with Claude's UI.
+    return max(0.0, min(100.0, float(v)))
 
 
 def parse_time(v):

@@ -40,6 +40,17 @@ BASE = "https://claude.ai/api"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Claude/1.0 Chrome/126 Electron/31 Safari/537.36")
 MIN_FETCH_S = 300  # min seconds between real /usage calls
+REQUEST_ATTEMPTS = 3
+RETRY_DELAYS_S = (3, 10)
+STATUS_MARKER = "__CLAUDE_WIDGET_HTTP_STATUS__"
+
+
+class TransientFetchError(RuntimeError):
+    """A temporary network/edge response that does not prove login expiry."""
+
+
+class AuthenticationError(RuntimeError):
+    """An explicit HTTP authentication failure."""
 
 
 def _safe_storage_key():
@@ -87,17 +98,38 @@ def get_session_key():
 
 
 def curl_json(url, cookie, timeout=25):
-    p = subprocess.run(
-        ["curl", "-sS", "-m", str(timeout),
-         "-H", f"Cookie: sessionKey={cookie}",
-         "-H", f"User-Agent: {UA}",
-         "-H", "Accept: application/json", url],
-        capture_output=True, text=True,
+    last_detail = ""
+    for attempt in range(REQUEST_ATTEMPTS):
+        p = subprocess.run(
+            ["curl", "-sS", "-m", str(timeout),
+             "-H", f"Cookie: sessionKey={cookie}",
+             "-H", f"User-Agent: {UA}",
+             "-H", "Accept: application/json",
+             "-w", f"\n{STATUS_MARKER}%{{http_code}}", url],
+            capture_output=True, text=True,
+        )
+        body, marker, status_text = p.stdout.rpartition(STATUS_MARKER)
+        if marker:
+            body = body.rstrip("\n")
+            try:
+                status = int(status_text.strip())
+            except ValueError:
+                status = 0
+        else:
+            body = p.stdout
+            status = 0
+        if status in (401, 403):
+            raise AuthenticationError(f"Claude 认证失效 (HTTP {status})")
+        try:
+            return json.loads(body)
+        except Exception:
+            prefix = f"HTTP {status}: " if status else ""
+            last_detail = prefix + (body[:120] or p.stderr[:120] or f"curl 退出码 {p.returncode}")
+            if attempt + 1 < REQUEST_ATTEMPTS:
+                time.sleep(RETRY_DELAYS_S[attempt])
+    raise TransientFetchError(
+        f"连续 {REQUEST_ATTEMPTS} 次非 JSON 响应 ({last_detail})"
     )
-    try:
-        return json.loads(p.stdout)
-    except Exception:
-        raise RuntimeError(f"非 JSON 响应 ({p.stdout[:120] or p.stderr[:120]})")
 
 
 def get_org(cookie):
@@ -170,8 +202,14 @@ def fetch_usage(force=False):
             return prev  # throttled: reuse last good data, no request
     STAMP.write_text("")  # mark this attempt (bumps mtime) before we call
     cookie = get_session_key()
-    org = get_org(cookie)
-    j = call_usage(cookie, org)
+    try:
+        org = get_org(cookie)
+        j = call_usage(cookie, org)
+    except TransientFetchError:
+        prev = _last_good()
+        if prev is not None:
+            return prev
+        raise
     # cache ONLY on a fresh success — restarts the throttle window
     if _is_usable_usage(j):
         RAW.write_text(json.dumps(j, indent=2))

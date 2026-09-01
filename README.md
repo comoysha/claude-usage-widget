@@ -26,8 +26,15 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
    `codex_last_fetch.json`；
 3. 跑 [`render.py`](render.py)，把两份数据生成同一个 SwiftBar 菜栏入口与两个分区。
 
+两份本次结果文件都用同目录临时文件写入，再原子替换到 `last_fetch.json` /
+`codex_last_fetch.json`。这样自动刷新、手动“立即刷新”和 SwiftBar 自己的重跑即使短暂重叠，
+读方也不会看到半截 JSON 或空文件。
+
 时间% 由 `render.py` 在每个 tick 本地重算，倒计时随之更新，因此显示始终是「活」的，
 不必每 tick 都打接口。
+
+Claude `/usage` 的 `utilization` 本身就是百分数（`1.0` 表示 **1%**，不是 100%）；
+渲染与窗口日志都按百分数直接读取并限制在 `0%`～`100%`，避免 1% 边界被误放大。
 
 ### Codex 数据来源
 
@@ -71,8 +78,12 @@ sessionKey 每次抓取都现解现用，不落明文；**不做任何 token 刷
 
 - `fetch_usage.py` 用 `.last_attempt` 触碰文件把真实请求节流到 **每 5 分钟一次**，
   其余 tick 复用上次成功的数据（`usage_raw.json`）。
+- Claude API 或 Cloudflare 偶发返回非 JSON 页面（如瞬时 `302 Found`）时，单次抓取会按
+  `立即 → 3 秒后 → 10 秒后` 有界尝试 3 次。全部失败时继续展示 `usage_raw.json`
+  中上一次成功数据，不把瞬时网络故障误报为“重新登录”。
 - `usage_raw.json` 只保留可解析的上次好数据；本次 Claude 抓取异常会写入
-  `last_fetch.json`，并在 Claude 分区显示“重新登录”，不会影响 Codex 分区。
+  `last_fetch.json`；只有 Cookie 缺失、HTTP `401/403` 或用量数据结构明确不可用时，
+  Claude 分区才显示“重新登录”，不会影响 Codex 分区。
 - 刷新日志中的时间固定标记为 `Asia/Shanghai (UTC+8)`。
 
 ## 演进史（Before → After）

@@ -7,12 +7,28 @@
 # /usage throttle, so every tick makes a real API call. Renders via the helper below.
 
 DIR="$HOME/claude-usage-widget"
+
+write_json_atomically() {
+  local target="$1"
+  shift
+  local tmp
+  tmp="$(mktemp "$DIR/.${target##*/}.XXXXXX")" || return 1
+  "$@" > "$tmp"
+  local rc=$?
+  if [ -s "$tmp" ]; then
+    mv "$tmp" "$target"
+  else
+    rm -f "$tmp"
+  fi
+  return "$rc"
+}
+
 # fetch_usage.py prints the usage JSON on success, or {"error": ...} on failure.
 # Capture the latest result (success OR error) so the widget reflects this tick,
 # not a stale cache. fetch_usage.py itself only caches usage_raw.json on success.
-python3 "$DIR/fetch_usage.py" 2>/dev/null > "$DIR/last_fetch.json"
+write_json_atomically "$DIR/last_fetch.json" python3 "$DIR/fetch_usage.py" 2>/dev/null
 # Codex app-server exposes its official rate limits; the reader falls back to local
 # session events and never reads auth.json or copies credentials.
-python3 "$DIR/fetch_codex_usage.py" 2>/dev/null > "$DIR/codex_last_fetch.json"
+write_json_atomically "$DIR/codex_last_fetch.json" python3 "$DIR/fetch_codex_usage.py" 2>/dev/null
 # render.py reads last_fetch.json and emits SwiftBar markup (never touches tokens).
 python3 "$DIR/render.py"

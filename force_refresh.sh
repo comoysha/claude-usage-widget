@@ -12,9 +12,24 @@
 DIR="$HOME/claude-usage-widget"
 LOG="$DIR/force_refresh.log"
 
-python3 "$DIR/fetch_usage.py" --force 2>>"$LOG" > "$DIR/last_fetch.json"
+write_json_atomically() {
+  local target="$1"
+  shift
+  local tmp
+  tmp="$(mktemp "$DIR/.${target##*/}.XXXXXX")" || return 1
+  "$@" > "$tmp"
+  local rc=$?
+  if [ -s "$tmp" ]; then
+    mv "$tmp" "$target"
+  else
+    rm -f "$tmp"
+  fi
+  return "$rc"
+}
+
+write_json_atomically "$DIR/last_fetch.json" python3 "$DIR/fetch_usage.py" --force 2>>"$LOG"
 rc=$?
-python3 "$DIR/fetch_codex_usage.py" 2>>"$LOG" > "$DIR/codex_last_fetch.json"
+write_json_atomically "$DIR/codex_last_fetch.json" python3 "$DIR/fetch_codex_usage.py" 2>>"$LOG"
 codex_rc=$?
 # Heartbeat so a click always leaves a trace (helps diagnose if it ever misbehaves again).
 echo "$(TZ=Asia/Shanghai date '+%F %T') Asia/Shanghai (UTC+8) force_refresh claude_rc=$rc codex_rc=$codex_rc bytes=$(wc -c < "$DIR/last_fetch.json" | tr -d ' ')" >> "$LOG"
