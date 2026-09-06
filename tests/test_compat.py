@@ -114,6 +114,62 @@ class RenderCompatibilityTests(unittest.TestCase):
                 self.assertEqual(float(percentage), used)
                 self.assertEqual(float(percentage), logged)
 
+    def test_claude_image_rows_are_separated_for_swiftbar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            codex = root / "codex_last_fetch.json"
+            claude.write_text(
+                json.dumps(
+                    {
+                        "five_hour": {"utilization": 10},
+                        "seven_day": {"utilization": 20},
+                    }
+                )
+            )
+            codex.write_text(
+                json.dumps(
+                    {
+                        "rate_limits": {
+                            "secondary": {
+                                "used_percent": 30,
+                                "window_minutes": 10080,
+                            }
+                        }
+                    }
+                )
+            )
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen,
+                    "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ),
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: root / args[3],
+                ),
+                mock.patch.object(
+                    render,
+                    "panel_image_line",
+                    side_effect=lambda path: "PANEL:" + path.name,
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn(
+                "PANEL:claude_five_panel.png\n---\nPANEL:claude_seven_panel.png",
+                output.getvalue(),
+            )
+
     def test_claude_failure_keeps_codex_panel(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -216,6 +272,38 @@ class RenderCompatibilityTests(unittest.TestCase):
             with mock.patch.object(render, "b64", return_value="image-data"):
                 line = render.panel_image_line(panel)
             self.assertEqual("| image=image-data width=10.0 height=5.0", line)
+
+    def test_claude_windows_render_as_two_short_retina_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            win = {
+                "used": 25,
+                "time": 50,
+                "rem": "2h30m",
+                "ucol": imggen.OK,
+                "verdict": "↓ 落后 · 有余量",
+                "vcol": imggen.OK,
+            }
+            with mock.patch.object(imggen, "HERE", root):
+                five = imggen.panel(
+                    win, None, "Claude Code", "five.png", single_window="five"
+                )
+                seven = imggen.panel(
+                    None, win, None, "seven.png", single_window="seven"
+                )
+                codex = imggen.panel(
+                    None, win, "Codex", "codex.png", only_weekly=True
+                )
+
+            with (
+                Image.open(five) as five_image,
+                Image.open(seven) as seven_image,
+                Image.open(codex) as codex_image,
+            ):
+                self.assertLessEqual(five_image.height, codex_image.height)
+                self.assertLess(seven_image.height, codex_image.height)
+                self.assertEqual(five_image.info.get("dpi"), codex_image.info.get("dpi"))
+                self.assertEqual(seven_image.info.get("dpi"), codex_image.info.get("dpi"))
 
     def test_menubar_icon_hides_claude_columns_and_separators(self):
         with tempfile.TemporaryDirectory() as tmp:

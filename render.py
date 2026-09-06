@@ -199,8 +199,19 @@ def main():
     print(" | image=%s" % b64(mb))
     print("---")
     if claude_available:
-        claude_panel = imggen.panel(five, seven, "Claude Code", "claude_panel.png")
-        print(panel_image_line(claude_panel))
+        # Keep each Retina image near the crisp single-window Codex panel
+        # height. The separator is also required on SwiftBar 2.1.1/macOS 26:
+        # two adjacent image-only rows make the second attachment render from a
+        # low-resolution intermediate bitmap.
+        claude_five_panel = imggen.panel(
+            five, None, "Claude Code", "claude_five_panel.png", single_window="five"
+        )
+        claude_seven_panel = imggen.panel(
+            None, seven, None, "claude_seven_panel.png", single_window="seven"
+        )
+        print(panel_image_line(claude_five_panel))
+        print("---")
+        print(panel_image_line(claude_seven_panel))
     else:
         print("Claude Code · 重新登录 | color=#8E8E93")
     print("---")

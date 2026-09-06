@@ -144,7 +144,8 @@ def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=T
     return out
 
 
-def panel(five, seven, service=None, output="panel.png", only_weekly=False):
+def panel(five, seven, service=None, output="panel.png", only_weekly=False,
+          single_window=None):
     """iOS-style panel with two window sections, each with 时间 / 用量 bars
     and its own pace verdict, separated by a hairline divider.
 
@@ -166,7 +167,8 @@ def panel(five, seven, service=None, output="panel.png", only_weekly=False):
     sec_h = 22 * S + row_dy + 6 * S + bar_h + 20 * S
     gap = 34 * S               # space between the two sections (holds a divider)
     title_h = 28 * S if service else 0
-    H = pad + 6 * S + title_h + (sec_h if only_weekly else sec_h + gap + sec_h) + pad
+    is_single = only_weekly or single_window in ("five", "seven")
+    H = pad + 6 * S + title_h + (sec_h if is_single else sec_h + gap + sec_h) + pad
     img = Image.new("RGBA", (int(W), int(H)), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
@@ -196,7 +198,9 @@ def panel(five, seven, service=None, output="panel.png", only_weekly=False):
     if service:
         d.text((pad, y), service, font=fw_sec, fill=INK, anchor="ls")
         y += title_h
-    if only_weekly:
+    if single_window == "five":
+        section(y, "5 小时窗口", five)
+    elif only_weekly or single_window == "seven":
         section(y, "7 天窗口", seven)
     else:
         y = section(y, "5 小时窗口", five)
