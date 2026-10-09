@@ -78,6 +78,39 @@ class ClaudePayloadTests(unittest.TestCase):
 
         run.assert_called_once()
 
+    @mock.patch.object(fetch_usage.time, "sleep")
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_curl_json_retries_cloudflare_challenge_403(self, run, sleep):
+        run.side_effect = [
+            mock.Mock(
+                stdout=f"<!DOCTYPE html><title>Just a moment...</title>\n"
+                       f"{fetch_usage.STATUS_MARKER}403",
+                stderr="", returncode=0,
+            ),
+            mock.Mock(
+                stdout=f'{{"five_hour": {{"utilization": 69}}}}\n{fetch_usage.STATUS_MARKER}200',
+                stderr="", returncode=0,
+            ),
+        ]
+
+        result = fetch_usage.curl_json("https://example.test/usage", "secret")
+
+        self.assertEqual(69, result["five_hour"]["utilization"])
+        self.assertEqual(2, run.call_count)
+
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_curl_json_json_403_is_auth_failure(self, run):
+        run.return_value = mock.Mock(
+            stdout=f'{{"type":"error","error":{{"type":"permission_error"}}}}\n'
+                   f"{fetch_usage.STATUS_MARKER}403",
+            stderr="", returncode=0,
+        )
+
+        with self.assertRaisesRegex(fetch_usage.AuthenticationError, "HTTP 403"):
+            fetch_usage.curl_json("https://example.test/usage", "secret")
+
+        run.assert_called_once()
+
     def test_transient_failure_reuses_last_good_payload(self):
         cached = {"five_hour": {"utilization": 21}}
         with tempfile.TemporaryDirectory() as tmp:

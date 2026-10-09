@@ -118,7 +118,10 @@ def curl_json(url, cookie, timeout=25):
         else:
             body = p.stdout
             status = 0
-        if status in (401, 403):
+        # A Cloudflare bot challenge is also HTTP 403, but its body is an HTML
+        # "Just a moment..." page — that's an edge hiccup, not a logged-out session.
+        # Only a 401, or a 403 carrying claude.ai's own (non-HTML) error, means re-login.
+        if status == 401 or (status == 403 and not body.lstrip().startswith("<")):
             raise AuthenticationError(f"Claude 认证失效 (HTTP {status})")
         try:
             return json.loads(body)
