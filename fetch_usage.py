@@ -24,6 +24,7 @@ one real call per MIN_FETCH_S; between calls it serves the last good payload.
 """
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -43,6 +44,7 @@ MIN_FETCH_S = 300  # min seconds between real /usage calls
 REQUEST_ATTEMPTS = 3
 RETRY_DELAYS_S = (3, 10)
 STATUS_MARKER = "__CLAUDE_WIDGET_HTTP_STATUS__"
+DEBUG_LOG = HERE / "fetch_debug.log"  # non-200 responses (no cookie), for diagnosis
 
 
 class TransientFetchError(RuntimeError):
@@ -51,6 +53,10 @@ class TransientFetchError(RuntimeError):
 
 class AuthenticationError(RuntimeError):
     """An explicit HTTP authentication failure."""
+
+
+class RegionUnavailableError(TransientFetchError):
+    """claude.ai refused the egress IP's region — a proxy problem, not a logout."""
 
 
 def _safe_storage_key():
@@ -97,11 +103,53 @@ def get_session_key():
     raise RuntimeError("解密结果不是有效的 sessionKey")
 
 
+def _log_failure(url, status, body, stderr):
+    """Append a non-200 response summary to DEBUG_LOG. Never logs the cookie."""
+    try:
+        if DEBUG_LOG.exists() and DEBUG_LOG.stat().st_size > 200_000:
+            DEBUG_LOG.write_text("")
+        proxy = {k: os.environ[k] for k in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+                 if k in os.environ}
+        with DEBUG_LOG.open("a") as fh:
+            fh.write(json.dumps({
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"), "url": url.rsplit("/", 1)[-1],
+                "status": status, "proxy": proxy, "body": body[:400], "stderr": stderr[:200],
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _system_proxy():
+    """macOS system HTTPS proxy as a curl -x URL, or None.
+
+    SwiftBar launches plugins without the shell's HTTPS_PROXY, so curl would go
+    direct — and from a blocked region claude.ai answers 403 region_unavailable.
+    curl ignores the macOS system proxy on its own, so read it from scutil.
+    """
+    if any(k in os.environ for k in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")):
+        return None  # curl already honours the env proxy
+    try:
+        out = subprocess.run(["scutil", "--proxy"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except Exception:
+        return None
+    conf = {}
+    for line in out.splitlines():
+        k, sep, v = line.partition(" : ")
+        if sep:
+            conf[k.strip()] = v.strip()
+    if conf.get("HTTPSEnable") == "1" and conf.get("HTTPSProxy") and conf.get("HTTPSPort"):
+        return f"http://{conf['HTTPSProxy']}:{conf['HTTPSPort']}"
+    return None
+
+
 def curl_json(url, cookie, timeout=25):
     last_detail = ""
+    proxy = _system_proxy()
+    proxy_args = ["-x", proxy] if proxy else []
     for attempt in range(REQUEST_ATTEMPTS):
         p = subprocess.run(
-            ["curl", "-sS", "-m", str(timeout),
+            ["curl", "-sS", "-m", str(timeout), *proxy_args,
              "-H", f"Cookie: sessionKey={cookie}",
              "-H", f"User-Agent: {UA}",
              "-H", "Accept: application/json",
@@ -118,9 +166,13 @@ def curl_json(url, cookie, timeout=25):
         else:
             body = p.stdout
             status = 0
+        if status != 200:
+            _log_failure(url, status, body, p.stderr)
         # A Cloudflare bot challenge is also HTTP 403, but its body is an HTML
         # "Just a moment..." page — that's an edge hiccup, not a logged-out session.
         # Only a 401, or a 403 carrying claude.ai's own (non-HTML) error, means re-login.
+        if status == 403 and "region_unavailable" in body:
+            raise RegionUnavailableError("Claude 地区不可用（代理未生效？）")
         if status == 401 or (status == 403 and not body.lstrip().startswith("<")):
             raise AuthenticationError(f"Claude 认证失效 (HTTP {status})")
         try:

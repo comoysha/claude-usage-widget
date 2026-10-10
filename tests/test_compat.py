@@ -19,6 +19,29 @@ def make_panel(path):
 
 
 class ClaudePayloadTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patches = [
+            mock.patch.object(fetch_usage, "DEBUG_LOG", Path(tmp.name) / "debug.log"),
+            mock.patch.object(fetch_usage, "_system_proxy", return_value=None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    @mock.patch.object(fetch_usage.subprocess, "run")
+    def test_region_403_is_not_auth_failure(self, run):
+        run.return_value = mock.Mock(
+            stdout='{"type":"error","error":{"type":"permission_error",'
+                   '"details":{"error_code":"region_unavailable"}}}\n'
+                   f"{fetch_usage.STATUS_MARKER}403",
+            stderr="", returncode=0,
+        )
+
+        with self.assertRaises(fetch_usage.RegionUnavailableError):
+            fetch_usage.curl_json("https://example.test/usage", "secret")
+
     def test_null_window_is_not_a_usable_cache_payload(self):
         self.assertFalse(fetch_usage._is_usable_usage({"five_hour": None}))
 
@@ -203,6 +226,63 @@ class RenderCompatibilityTests(unittest.TestCase):
                 output.getvalue(),
             )
 
+    def test_codex_five_hour_window_gets_its_own_column_and_panel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            codex = root / "codex_last_fetch.json"
+            claude.write_text(json.dumps({"five_hour": None}))
+            codex.write_text(
+                json.dumps(
+                    {
+                        "rate_limits": {
+                            "primary": {
+                                "used_percent": 100,
+                                "window_minutes": 300,
+                                "resets_at": 4102444800,
+                            },
+                            "secondary": {
+                                "used_percent": 37,
+                                "window_minutes": 10080,
+                                "resets_at": 4102444800,
+                            },
+                        }
+                    }
+                )
+            )
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen,
+                    "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ) as menubar,
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: root / args[3],
+                ),
+                mock.patch.object(
+                    render,
+                    "panel_image_line",
+                    side_effect=lambda path: "PANEL:" + path.name,
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn(
+                "PANEL:codex_five_panel.png\n---\nPANEL:codex_panel.png",
+                output.getvalue(),
+            )
+            self.assertEqual(100.0, menubar.call_args.kwargs["codex_five"][0])
+            self.assertEqual(37.0, menubar.call_args.args[2][0])
+
     def test_claude_failure_keeps_codex_panel(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -246,7 +326,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 render.main()
 
             text = output.getvalue()
-            self.assertIn("Claude Code · 重新登录", text)
+            self.assertIn("Claude Code · 无数据", text)
             self.assertNotIn("待确认字段", text)
             self.assertNotIn("顶层键", text)
             self.assertIn("立即刷新", text)
@@ -295,7 +375,7 @@ class RenderCompatibilityTests(unittest.TestCase):
             ):
                 render.main()
 
-            self.assertIn("Claude Code · 重新登录", output.getvalue())
+            self.assertIn("Claude Code · 无数据", output.getvalue())
             self.assertIn("width=10.0 height=5.0", output.getvalue())
             self.assertEqual(panel.call_args.args[2], "Codex")
 
@@ -352,6 +432,12 @@ class RenderCompatibilityTests(unittest.TestCase):
                 )
                 with Image.open(full) as image:
                     self.assertEqual((222, 44), image.size)
+
+                with_codex_five = imggen.combined_menubar_icon(
+                    (10, 20), (30, 40), (16, 27), show_claude=True, codex_five=(100, 50)
+                )
+                with Image.open(with_codex_five) as image:
+                    self.assertEqual((296, 44), image.size)
 
 
 if __name__ == "__main__":

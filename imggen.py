@@ -114,14 +114,18 @@ def menubar_icon(used, time_pct, output="menubar.png"):
     return out
 
 
-def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=True):
-    """Compact usage columns; hide Claude columns while Claude is unavailable."""
+def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=True,
+                          codex_five=None):
+    """Compact usage columns; hide Claude columns while Claude is unavailable.
+
+    codex_five is optional: Codex only reports a 5-hour window on some plans,
+    so its column is dropped rather than shown as "--" when absent."""
     S = 2
     font = _font(F_CJK, 7 * S, index=CJK_W6)
-    if show_claude:
-        rows = [("C5h", claude_five), ("C7d", claude_seven), ("X7d", codex_weekly)]
-    else:
-        rows = [("X7d", codex_weekly)]
+    rows = [("C5h", claude_five), ("C7d", claude_seven)] if show_claude else []
+    if codex_five is not None:
+        rows.append(("X5h", codex_five))
+    rows.append(("X7d", codex_weekly))
     W, H = len(rows) * 37 * S, 22 * S
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)

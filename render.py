@@ -184,16 +184,21 @@ def main():
     except Exception:
         codex_data = None
     cw = codex_windows(codex_data)
-    codex_seven = None
+    codex_five = codex_seven = None
     if cw is not None:
         su, sr, sm = cw.get(10080, (None, None, 10080))
         codex_seven = window_stats(su, sr, sm * 60, now)
+        # The 5-hour window is plan-dependent; only show it when Codex reports it.
+        if 300 in cw:
+            fu, fr, fm = cw[300]
+            codex_five = window_stats(fu, fr, fm * 60, now)
 
     mb = imggen.combined_menubar_icon(
         ((five or {}).get("used"), (five or {}).get("time")),
         ((seven or {}).get("used"), (seven or {}).get("time")),
         ((codex_seven or {}).get("used"), (codex_seven or {}).get("time")),
         show_claude=claude_available,
+        codex_five=(codex_five["used"], codex_five["time"]) if codex_five else None,
     )
 
     print(" | image=%s" % b64(mb))
@@ -213,9 +218,25 @@ def main():
         print("---")
         print(panel_image_line(claude_seven_panel))
     else:
-        print("Claude Code · 重新登录 | color=#8E8E93")
+        err = str(data.get("error", "")) if isinstance(data, dict) else ""
+        # Only an auth failure means re-login; region/network errors are proxy issues.
+        label = "重新登录" if "认证失效" in err else "无数据"
+        print("Claude Code · %s | color=#8E8E93" % label)
+        if err:
+            print("--%s | color=#8E8E93" % err[:100])
     print("---")
-    if codex_seven:
+    if codex_five:
+        # Same split-with-separator layout as the Claude panels above.
+        codex_five_panel = imggen.panel(
+            codex_five, None, "Codex", "codex_five_panel.png", single_window="five"
+        )
+        codex_panel = imggen.panel(
+            None, codex_seven, None, "codex_panel.png", single_window="seven"
+        )
+        print(panel_image_line(codex_five_panel))
+        print("---")
+        print(panel_image_line(codex_panel))
+    elif codex_seven:
         codex_panel = imggen.panel(None, codex_seven, "Codex", "codex_panel.png", only_weekly=True)
         print(panel_image_line(codex_panel))
     else:
