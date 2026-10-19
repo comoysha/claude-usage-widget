@@ -13,12 +13,16 @@ env/
 # Runtime / generated data (may contain credentials or account info)
 .org.json
 .last_attempt
+.kimi_last_attempt
 last_fetch.json
 codex_last_fetch.json
+kimi_last_fetch.json
 usage_raw.json
 window_state.json
 window_log.jsonl
 window_log.md
+.last_fetch.json.*
+.kimi_last_fetch.json.*
 
 # Generated images
 *.png

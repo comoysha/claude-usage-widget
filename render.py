@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 RAW = HERE / "last_fetch.json"
 CACHE = HERE / "usage_raw.json"
 CODEX_RAW = HERE / "codex_last_fetch.json"
+KIMI_RAW = HERE / "kimi_last_fetch.json"
 WINDOW_S = 5 * 3600
 SEVEN_S = 7 * 86400
 
@@ -193,12 +194,37 @@ def main():
             fu, fr, fm = cw[300]
             codex_five = window_stats(fu, fr, fm * 60, now)
 
+    # Kimi Code: the console shows exactly two bars — 5 小时用量 and
+    # 总使用量 (the subscription-cycle quota, ~30 days). The cycle window
+    # uses the same utilization/resets_at fields as Claude's payload, so
+    # find_window works; its span comes from the subscription itself.
+    try:
+        kimi_data = json.loads(KIMI_RAW.read_text())
+    except Exception:
+        kimi_data = None
+    kimi_err = (kimi_data or {}).get("error", "") if isinstance(kimi_data, dict) else ""
+    k_used, k_reset = find_window(kimi_data, ("five_hour", "fiveHour"))
+    kc_used, kc_reset = find_window(kimi_data, ("cycle", "monthly", "seven_day"))
+    kc_start = parse_time(
+        ((kimi_data or {}).get("cycle") or {}).get("starts_at")
+    ) if isinstance(kimi_data, dict) else None
+    kimi_available = not kimi_err and (k_used is not None or kc_used is not None)
+    kimi_five = window_stats(k_used, k_reset, WINDOW_S, now) \
+        if k_used is not None else None
+    kimi_cycle = None
+    if kc_used is not None:
+        span_s = (kc_reset - kc_start) if (kc_reset and kc_start and kc_reset > kc_start) \
+            else 30 * 86400
+        kimi_cycle = window_stats(kc_used, kc_reset, span_s, now)
+
     mb = imggen.combined_menubar_icon(
         ((five or {}).get("used"), (five or {}).get("time")),
         ((seven or {}).get("used"), (seven or {}).get("time")),
         ((codex_seven or {}).get("used"), (codex_seven or {}).get("time")),
         show_claude=claude_available,
         codex_five=(codex_five["used"], codex_five["time"]) if codex_five else None,
+        kimi_five=(kimi_five["used"], kimi_five["time"]) if kimi_five else None,
+        kimi_cycle=(kimi_cycle["used"], kimi_cycle["time"]) if kimi_cycle else None,
     )
 
     print(" | image=%s" % b64(mb))
@@ -243,6 +269,32 @@ def main():
         detail = (codex_data or {}).get("error", "还没有本地用量快照") if isinstance(codex_data, dict) else "还没有本地用量快照"
         print("Codex · 无数据 | color=#8E8E93")
         print("--%s | color=#8E8E93" % str(detail)[:100])
+    print("---")
+    if kimi_five and kimi_cycle:
+        # Same split-with-separator layout as the Claude panels above.
+        kimi_five_panel = imggen.panel(
+            kimi_five, None, "Kimi", "kimi_five_panel.png", single_window="five"
+        )
+        kimi_cycle_panel = imggen.panel(
+            None, kimi_cycle, None, "kimi_cycle_panel.png", single_window="seven",
+            seven_title="订阅周期窗口"
+        )
+        print(panel_image_line(kimi_five_panel))
+        print("---")
+        print(panel_image_line(kimi_cycle_panel))
+    elif kimi_cycle:
+        kimi_panel = imggen.panel(None, kimi_cycle, "Kimi", "kimi_panel.png",
+                                  only_weekly=True, seven_title="订阅周期窗口")
+        print(panel_image_line(kimi_panel))
+    elif kimi_five:
+        kimi_panel = imggen.panel(kimi_five, None, "Kimi", "kimi_panel.png",
+                                  single_window="five")
+        print(panel_image_line(kimi_panel))
+    else:
+        label = "重新登录" if "认证失效" in str(kimi_err) else "无数据"
+        print("Kimi · %s | color=#8E8E93" % label)
+        if kimi_err:
+            print("--%s | color=#8E8E93" % str(kimi_err)[:100])
     print("---")
     print("立即刷新 | bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 

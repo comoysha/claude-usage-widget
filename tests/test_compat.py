@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -201,6 +202,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "RAW", claude),
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "KIMI_RAW", codex),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen,
@@ -256,6 +258,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "RAW", claude),
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "KIMI_RAW", codex),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen,
@@ -312,6 +315,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "RAW", claude),
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
                 mock.patch.object(render, "b64", return_value="image-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon", return_value=root / "menubar.png"
@@ -362,6 +366,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "RAW", claude),
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
+                mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
                 mock.patch.object(render, "b64", return_value="image-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon", return_value=root / "menubar.png"
@@ -438,6 +443,99 @@ class RenderCompatibilityTests(unittest.TestCase):
                 )
                 with Image.open(with_codex_five) as image:
                     self.assertEqual((296, 44), image.size)
+
+                with_kimi = imggen.combined_menubar_icon(
+                    (10, 20), (30, 40), (16, 27), show_claude=True,
+                    kimi_five=(0, 5), kimi_cycle=(5, 1),
+                )
+                with Image.open(with_kimi) as image:
+                    self.assertEqual((370, 44), image.size)
+
+    def test_kimi_cycle_window_gets_its_own_column_and_panels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            kimi = root / "kimi_last_fetch.json"
+            claude.write_text(json.dumps({"five_hour": None}))
+            # Mid-cycle: 15 of 30 days elapsed, so the pace clock reads ~50%.
+            now = datetime.now(timezone.utc)
+            cycle_start = (now - timedelta(days=15)).isoformat()
+            cycle_reset = (now + timedelta(days=15)).isoformat()
+            kimi.write_text(json.dumps({
+                "five_hour": {"utilization": 10,
+                              "resets_at": "2026-10-19T12:00:00+00:00"},
+                "cycle": {"utilization": 40,
+                          "resets_at": cycle_reset,
+                          "starts_at": cycle_start},
+            }))
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
+                mock.patch.object(render, "KIMI_RAW", kimi),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen, "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ) as menubar,
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: root / args[3],
+                ),
+                mock.patch.object(
+                    render,
+                    "panel_image_line",
+                    side_effect=lambda path: "PANEL:" + path.name,
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn(
+                "PANEL:kimi_five_panel.png\n---\nPANEL:kimi_cycle_panel.png",
+                output.getvalue(),
+            )
+            self.assertEqual(10.0, menubar.call_args.kwargs["kimi_five"][0])
+            # The cycle window's elapsed time comes from starts_at..resets_at
+            # (mid-cycle of a 30-day span ≈ 50%).
+            self.assertAlmostEqual(
+                50.0, menubar.call_args.kwargs["kimi_cycle"][1], delta=1.0
+            )
+
+    def test_kimi_failure_shows_muted_row_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            kimi = root / "kimi_last_fetch.json"
+            claude.write_text(json.dumps({"five_hour": None}))
+            kimi.write_text(json.dumps({"error": "Kimi 认证失效 (HTTP 401)"}))
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
+                mock.patch.object(render, "KIMI_RAW", kimi),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen, "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ) as menubar,
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: make_panel(root / "p.png"),
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn("Kimi · 重新登录", output.getvalue())
+            self.assertIsNone(menubar.call_args.kwargs["kimi_five"])
+            self.assertIsNone(menubar.call_args.kwargs["kimi_cycle"])
 
 
 if __name__ == "__main__":

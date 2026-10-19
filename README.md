@@ -1,20 +1,19 @@
-# Claude Code + Codex Usage Widget
+# Claude Code + Codex + Kimi Usage Widget
 
 一个 macOS 菜单栏小组件（基于 [SwiftBar](https://github.com/swiftbar/SwiftBar)），
-在同一个 SwiftBar 入口中分区显示 **Claude Code** 与 **Codex** 的官方用量，并把
-「已用用量%」和「已过时间%」并排对比，帮你判断烧钱节奏。同时把每个窗口终点时的
-用量记进日志。
+在同一个 SwiftBar 入口中分区显示 **Claude Code**、**Codex** 与 **Kimi Code** 的
+官方用量，并把「已用用量%」和「已过时间%」并排对比，帮你判断烧钱节奏。同时把
+每个窗口终点时的用量记进日志。
 
-Claude 可用时，菜单栏图标为三列（`C5h`、`C7d`、`X7d`），每列两行：
-**时间% / 用量%**；Claude 需要重新登录时仅保留 `X7d`；
-点开后是两个独立的 iOS 风格分区：Claude Code 保留 5 小时与 7 天窗口；为避免
-SwiftBar 对过高菜单图片重采样，Claude 的两个窗口分别使用一张 Retina 图片，并用菜单
-分隔线隔开，避免 SwiftBar 2.1.1 把连续的第二张图片从低分辨率中间位图绘制；当前 Codex
-账户只提供 7 天窗口，因此 Codex 面板只展示 7 天额度、节奏判断和重置倒计时。
-两侧独立降级：Claude 抓取失败、登录失效或接口返回空用量时，仅在 Claude 分区显示
-“重新登录”，Codex 分区仍正常刷新和展示。
-同一状态下，菜单栏图标会隐藏 `C5h`、`C7d` 和两侧之间的分隔线，只保留紧凑的
-`X7d`；Claude 恢复后自动回到三列。
+Claude 可用时，菜单栏图标为六列（`C5h`、`C7d`、`X5h`、`X7d`、`K5h`、`K30d`），
+每列两行：**时间% / 用量%**；某一侧不可用时只隐藏该侧的列；
+点开后是三个独立的 iOS 风格分区：Claude Code 保留 5 小时与 7 天窗口；为避免
+SwiftBar 对过高菜单图片重采样，Claude 的两个窗口分别使用一张 Retina 图片，并用
+菜单分隔线隔开，避免 SwiftBar 2.1.1 把连续的第二张图片从低分辨率中间位图绘制；
+Codex 显示 5 小时（视套餐）与 7 天窗口；Kimi 显示 5 小时窗口与订阅周期窗口
+（约 30 天，即 Kimi 控制台的「总使用量」，重置时间跟随下次续费时间）。
+两侧独立降级：任一侧抓取失败、登录失效或接口返回空用量时，仅该分区显示
+“重新登录/无数据”，其余分区仍正常刷新和展示。
 每张进度图会在 SwiftBar 输出里显式携带 Retina 点尺寸，并保持为单窗口高度，避免
 SwiftBar 2.1+ 在 macOS 26 上把未声明尺寸的下拉图片压缩成 `16×16` 图标，或对 Claude
 双窗口长图二次缩放而造成文字模糊。
@@ -27,11 +26,13 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
 1. 跑 [`fetch_usage.py`](fetch_usage.py) 抓 Claude 官方用量，写入 `last_fetch.json`；
 2. 跑 [`fetch_codex_usage.py`](fetch_codex_usage.py) 读取 Codex 官方限额快照，写入
    `codex_last_fetch.json`；
-3. 跑 [`render.py`](render.py)，把两份数据生成同一个 SwiftBar 菜栏入口与两个分区。
+3. 跑 [`fetch_kimi_usage.py`](fetch_kimi_usage.py) 调 Kimi 官网计费接口抓 Kimi Code
+   用量，写入 `kimi_last_fetch.json`；
+4. 跑 [`render.py`](render.py)，把三份数据生成同一个 SwiftBar 菜栏入口与三个分区。
 
 两份本次结果文件都用同目录临时文件写入，再原子替换到 `last_fetch.json` /
-`codex_last_fetch.json`。这样自动刷新、手动“立即刷新”和 SwiftBar 自己的重跑即使短暂重叠，
-读方也不会看到半截 JSON 或空文件。
+`codex_last_fetch.json` / `kimi_last_fetch.json`。这样自动刷新、手动“立即刷新”和
+SwiftBar 自己的重跑即使短暂重叠，读方也不会看到半截 JSON 或空文件。
 
 时间% 由 `render.py` 在每个 tick 本地重算，倒计时随之更新，因此显示始终是「活」的，
 不必每 tick 都打接口。
@@ -54,6 +55,27 @@ Codex 面板通常每 5 分钟从 app-server 更新；`usedPercent` 按官方字
 
 Codex 的 `limit_id` 可能随账户或模型限额桶变化（例如 `codex_bengalfox`），因此降级
 读取 JSONL 时按时间选择最新的限额事件，不固定使用某个旧的 `limit_id`。
+
+### Kimi 数据来源
+
+Kimi 分区走 Kimi 官网的 Connect-RPC 网关，与 kimi.com 设置页和 Kimi Code 控制台
+完全同源（**全程只读**，不碰 `kimiCode` API Key）：
+
+1. 从 Kimi 桌面端的 daimon 配置
+   （`~/Library/Application Support/kimi-desktop/daimon-share/daimon/config.json`）
+   读出 `credentials.kimiWeb.accessToken`（kimi.com 网页会话 JWT，桌面端常驻保活，
+   有效期 15 分钟）。令牌每次现读现用，**不落明文、不打印、不缓存**。
+2. `POST https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages`
+   （`{"scope": ["FEATURE_CODING"]}`）拿到 5 小时滚动窗口与总额度；
+   再调 `kimi.gateway.order.v1.SubscriptionService/GetSubscription` 拿到订阅周期的
+   起止时间（`currentStartTime` / `nextBillingTime`）。
+3. Kimi 控制台只展示两根条：**5 小时用量** 与 **总使用量**（订阅周期窗口，约 30 天，
+   重置时间 = 下次续费时间），本组件一一对应为 `K5h` 与 `K30d` 两列。
+   额度本身是百分数归一化的（`limit: "100"` = 100%），用量% = 100 − remaining。
+   注意：老套餐的 7 天周限额在新控制台已不再展示，本组件也不映射它。
+
+accessToken 过期后由 Kimi 桌面端自动刷新；若桌面端退出登录，Kimi 分区会显示
+“重新登录”，不影响 Claude / Codex 分区。
 
 ### 凭据模型（重要）
 
@@ -80,7 +102,8 @@ sessionKey 每次抓取都现解现用，不落明文；**不做任何 token 刷
 ### 限流与降级
 
 - `fetch_usage.py` 用 `.last_attempt` 触碰文件把真实请求节流到 **每 5 分钟一次**，
-  其余 tick 复用上次成功的数据（`usage_raw.json`）。
+  其余 tick 复用上次成功的数据（`usage_raw.json`）；`fetch_kimi_usage.py` 用
+  `.kimi_last_attempt` 做同样的节流。
 - Claude API 或 Cloudflare 偶发返回非 JSON 页面（如瞬时 `302 Found`）时，单次抓取会按
   `立即 → 3 秒后 → 10 秒后` 有界尝试 3 次。全部失败时继续展示 `usage_raw.json`
   中上一次成功数据，不把瞬时网络故障误报为“重新登录”。
@@ -161,6 +184,8 @@ python3 window_log.py
    [`claude-usage.5m.sh`](plugins/claude-usage.5m.sh) 软链进你的 SwiftBar 插件目录
 5. **确保 Claude Desktop 已登录**（Claude 分区的数据来源），并至少在 Codex 中完成过
    一次请求（Codex 分区才会产生本地限额快照）
+6. **确保 Kimi 桌面端（Kimi Work）已登录**（Kimi 分区的 accessToken 来源；
+   桌面端常驻运行时令牌自动保活）
 
 ## 文件一览
 
@@ -169,15 +194,17 @@ python3 window_log.py
 | `plugins/claude-usage.5m.sh` | SwiftBar 入口，每 5 分钟 tick |
 | `fetch_usage.py` | 解密 Desktop cookie，调 claude.ai 用量接口；限流节流 |
 | `fetch_codex_usage.py` | 只读 Codex 本地会话中的官方限额快照，不读取凭据 |
-| `render.py` | 读两侧缓存，生成共用菜单栏 + 两个独立面板 |
+| `fetch_kimi_usage.py` | 复用 Kimi 桌面端网页会话，调官网计费接口；限流节流 |
+| `render.py` | 读三侧缓存，生成共用菜单栏 + 三个独立面板 |
 | `imggen.py` | 把菜单栏图标与面板画成 iOS 风格 PNG（2x 视网膜）|
 | `window_log.py` | 记录每个窗口终点用量，输出 JSONL + MD 日志 |
 | `diag.py` | 只读排错工具（不打印任何密钥）|
 | `usage_raw.json` | 上次成功的用量数据（缓存 / 降级用）|
 | `last_fetch.json` | 本次 tick 的抓取结果（成功数据或错误）|
 | `codex_last_fetch.json` | 本次 tick 读取到的 Codex 限额快照或错误 |
+| `kimi_last_fetch.json` | 本次 tick 读取到的 Kimi 用量快照或错误 |
 | `.org.json` | 缓存的聊天组织 UUID（非机密）|
-| `.last_attempt` | 节流触碰文件，把真实请求限到每 5 分钟一次 |
+| `.last_attempt` / `.kimi_last_attempt` | 节流触碰文件，把真实请求限到每 5 分钟一次 |
 | `window_log.jsonl` / `window_log.md` | 窗口终点用量日志（原始 / 人看）|
 | `window_state.json` | 各窗口当前进行中的状态（供封窗检测）|
 
@@ -188,3 +215,5 @@ python3 window_log.py
 - sessionKey 每次现解现用，**不落明文**、不打印。
 - `.org.json` 只存组织 UUID（标识符，非机密）。
 - Codex 分区不读取 `~/.codex/auth.json`；仅从会话 JSONL 中抽取限额字段，不保留对话。
+- Kimi 分区只读 daimon 配置取 accessToken，每次现读现用，**不落明文**、不打印、
+  不缓存；不使用 `kimiCode` API Key，也不对 Kimi 桌面端做任何写入。

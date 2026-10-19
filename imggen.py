@@ -115,17 +115,23 @@ def menubar_icon(used, time_pct, output="menubar.png"):
 
 
 def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=True,
-                          codex_five=None):
+                          codex_five=None, kimi_five=None, kimi_cycle=None):
     """Compact usage columns; hide Claude columns while Claude is unavailable.
 
     codex_five is optional: Codex only reports a 5-hour window on some plans,
-    so its column is dropped rather than shown as "--" when absent."""
+    so its column is dropped rather than shown as "--" when absent. The same
+    applies to Kimi's columns: kimi_cycle is the subscription-cycle quota
+    (~30 days) shown in the Kimi console as 总使用量."""
     S = 2
     font = _font(F_CJK, 7 * S, index=CJK_W6)
     rows = [("C5h", claude_five), ("C7d", claude_seven)] if show_claude else []
     if codex_five is not None:
         rows.append(("X5h", codex_five))
     rows.append(("X7d", codex_weekly))
+    if kimi_five is not None:
+        rows.append(("K5h", kimi_five))
+    if kimi_cycle is not None:
+        rows.append(("K30d", kimi_cycle))
     W, H = len(rows) * 37 * S, 22 * S
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -149,7 +155,7 @@ def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=T
 
 
 def panel(five, seven, service=None, output="panel.png", only_weekly=False,
-          single_window=None):
+          single_window=None, five_title="5 小时窗口", seven_title="7 天窗口"):
     """iOS-style panel with two window sections, each with 时间 / 用量 bars
     and its own pace verdict, separated by a hairline divider.
 
@@ -203,15 +209,15 @@ def panel(five, seven, service=None, output="panel.png", only_weekly=False,
         d.text((pad, y), service, font=fw_sec, fill=INK, anchor="ls")
         y += title_h
     if single_window == "five":
-        section(y, "5 小时窗口", five)
+        section(y, five_title, five)
     elif only_weekly or single_window == "seven":
-        section(y, "7 天窗口", seven)
+        section(y, seven_title, seven)
     else:
-        y = section(y, "5 小时窗口", five)
+        y = section(y, five_title, five)
         # hairline divider centered in the gap between the two sections
         div_y = y + gap // 2
         d.line((pad, div_y, W - pad, div_y), fill=(198, 198, 200, 255), width=S)
-        section(y + gap, "7 天窗口", seven)
+        section(y + gap, seven_title, seven)
 
     # crop to actual content + margins. SwiftBar's dropdown reserves space on
     # the RIGHT of every row for the "SwiftBar ›" disclosure arrow, which makes

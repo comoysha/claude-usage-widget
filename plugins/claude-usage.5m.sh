@@ -30,5 +30,7 @@ write_json_atomically "$DIR/last_fetch.json" python3 "$DIR/fetch_usage.py" 2>/de
 # Codex app-server exposes its official rate limits; the reader falls back to local
 # session events and never reads auth.json or copies credentials.
 write_json_atomically "$DIR/codex_last_fetch.json" python3 "$DIR/fetch_codex_usage.py" 2>/dev/null
+# Kimi Code's official 5h/7d windows via the Kimi desktop session (read-only).
+write_json_atomically "$DIR/kimi_last_fetch.json" python3 "$DIR/fetch_kimi_usage.py" 2>/dev/null
 # render.py reads last_fetch.json and emits SwiftBar markup (never touches tokens).
 python3 "$DIR/render.py"
