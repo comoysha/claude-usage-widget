@@ -38,7 +38,7 @@ OK    = (52, 199, 89)    # green  跟上/有余量
 AHEAD = (255, 159, 10)   # orange 超前
 HOT   = (255, 59, 48)    # red    烧超前很多
 TRACK = (120, 120, 128, 64)   # iOS track fill (systemFill-ish)
-INK   = (60, 60, 67)     # label ink (light-mode popover)
+INK   = (130, 130, 136)  # label ink: mid-gray, readable on both light and dark popovers
 SUBTLE = (142, 142, 147) # secondary label
 # menubar-safe neutral: reads on both light and dark menu bars
 MB_NEUTRAL = (150, 150, 155)
@@ -127,7 +127,8 @@ def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=T
     rows = [("C5h", claude_five), ("C7d", claude_seven)] if show_claude else []
     if codex_five is not None:
         rows.append(("X5h", codex_five))
-    rows.append(("X7d", codex_weekly))
+    if codex_weekly is not None:
+        rows.append(("X7d", codex_weekly))
     if kimi_five is not None:
         rows.append(("K5h", kimi_five))
     if kimi_cycle is not None:

@@ -186,7 +186,12 @@ def main():
         codex_data = None
     cw = codex_windows(codex_data)
     codex_five = codex_seven = None
-    if cw is not None:
+    # A free plan means the paid Codex subscription has lapsed: hide Codex
+    # entirely (menubar column and dropdown panel) instead of showing a dead 0%.
+    plan = ((codex_data or {}).get("rate_limits") or {}).get("plan_type") \
+        if isinstance(codex_data, dict) else None
+    codex_hidden = str(plan).lower() == "free"
+    if cw is not None and not codex_hidden:
         su, sr, sm = cw.get(10080, (None, None, 10080))
         codex_seven = window_stats(su, sr, sm * 60, now)
         # The 5-hour window is plan-dependent; only show it when Codex reports it.
@@ -220,7 +225,7 @@ def main():
     mb = imggen.combined_menubar_icon(
         ((five or {}).get("used"), (five or {}).get("time")),
         ((seven or {}).get("used"), (seven or {}).get("time")),
-        ((codex_seven or {}).get("used"), (codex_seven or {}).get("time")),
+        (codex_seven["used"], codex_seven["time"]) if codex_seven else None,
         show_claude=claude_available,
         codex_five=(codex_five["used"], codex_five["time"]) if codex_five else None,
         kimi_five=(kimi_five["used"], kimi_five["time"]) if kimi_five else None,
@@ -265,11 +270,14 @@ def main():
     elif codex_seven:
         codex_panel = imggen.panel(None, codex_seven, "Codex", "codex_panel.png", only_weekly=True)
         print(panel_image_line(codex_panel))
+    elif codex_hidden:
+        pass
     else:
         detail = (codex_data or {}).get("error", "还没有本地用量快照") if isinstance(codex_data, dict) else "还没有本地用量快照"
         print("Codex · 无数据 | color=#8E8E93")
         print("--%s | color=#8E8E93" % str(detail)[:100])
-    print("---")
+    if not codex_hidden:
+        print("---")
     if kimi_five and kimi_cycle:
         # Same split-with-separator layout as the Claude panels above.
         kimi_five_panel = imggen.panel(
