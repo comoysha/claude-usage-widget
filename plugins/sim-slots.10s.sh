@@ -1,0 +1,1 @@
+/Users/xiayue/dev-platform/tools/sim/swiftbar/sim-slots.10s.sh

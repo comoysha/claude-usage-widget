@@ -26,7 +26,18 @@ The access token is read fresh on every real call and never printed or cached.
 Like fetch_usage.py: throttled to one real call per MIN_FETCH_S; transient
 failures reuse the last good payload (kimi_last_fetch.json keeps the previous
 success until the next real call writes fresh data or an {"error": ...} tick).
+
+Token freshness: the JWT lives 15 minutes but the desktop app only rotates it
+every ~20 minutes (and not at all while the Mac sleeps or the app is closed),
+so the token on disk is routinely expired for a few minutes per cycle. An
+expired token is therefore NOT a login failure: we skip the call and keep the
+last good payload. Only when the app is running and the same expired token has
+sat on disk for STALE_ALARM_S of continuous awake time (the app missed at
+least one rotation) do we report 认证失效. .kimi_token_state.json tracks that,
+storing only a hash of the token.
 """
+import base64
+import hashlib
 import json
 import subprocess
 import sys
@@ -36,6 +47,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RAW = HERE / "kimi_last_fetch.json"        # last successful payload (see below)
 STAMP = HERE / ".kimi_last_attempt"        # throttle touch file
+TOKEN_STATE = HERE / ".kimi_token_state.json"  # expired-token watch (hash only)
 DAIMON_CONFIG = (Path.home() / "Library/Application Support/kimi-desktop/"
                  "daimon-share/daimon/config.json")
 USAGES_ENDPOINT = ("https://www.kimi.com/apiv2/"
@@ -49,6 +61,10 @@ STATUS_MARKER = "__KIMI_WIDGET_HTTP_STATUS__"
 FIVE_H_MIN = 300
 CYCLE_FALLBACK_S = 30 * 86400  # subscription cycle is ~30 days; the exact
                                # span is taken from the subscription itself.
+EXPIRY_MARGIN_S = 60           # treat a token this close to exp as expired
+STALE_ALARM_S = 30 * 60        # app rotates every ~20 min; 30 min = missed one
+SLEEP_GAP_S = 15 * 60          # a gap this long between checks = Mac slept
+APP_PROCESS = "Kimi"
 
 
 class TransientFetchError(RuntimeError):
@@ -57,6 +73,10 @@ class TransientFetchError(RuntimeError):
 
 class AuthenticationError(RuntimeError):
     """An explicit HTTP authentication failure."""
+
+
+class TokenStaleError(TransientFetchError):
+    """The token on disk expired and the desktop app hasn't rotated it yet."""
 
 
 def _config():
@@ -69,16 +89,83 @@ def _config():
 def _access_token():
     tok = (_config().get("credentials") or {}).get("kimiWeb", {}).get("accessToken")
     if not tok:
-        raise RuntimeError("Kimi 桌面端配置里没有 kimiWeb accessToken（重新登录 Kimi 桌面端）")
+        raise AuthenticationError("Kimi 认证失效：桌面端没有通行证（重新登录 Kimi 桌面端）")
     return tok
+
+
+def _token_exp(tok):
+    """The JWT's exp claim (epoch seconds), or None if it can't be decoded."""
+    try:
+        part = tok.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return float(json.loads(base64.urlsafe_b64decode(part))["exp"])
+    except Exception:
+        return None
+
+
+def _app_running():
+    try:
+        return subprocess.run(["pgrep", "-x", APP_PROCESS],
+                              capture_output=True).returncode == 0
+    except Exception:
+        return True  # can't tell: assume running so a real logout still surfaces
+
+
+def _expired_for_awake_s(tok, now):
+    """How long (awake seconds) this same expired token has been seen on disk.
+
+    Resets when the token changes or when the gap since the previous check is
+    long enough that the Mac must have been asleep (the app can't rotate then,
+    so that time must not count against it)."""
+    digest = hashlib.sha256(tok.encode()).hexdigest()[:16]
+    try:
+        st = json.loads(TOKEN_STATE.read_text())
+    except Exception:
+        st = {}
+    if st.get("token") != digest or now - st.get("last_seen", 0) > SLEEP_GAP_S:
+        st = {"token": digest, "first_seen": now}
+    st["last_seen"] = now
+    try:
+        TOKEN_STATE.write_text(json.dumps(st))
+    except Exception:
+        pass
+    return now - st["first_seen"]
+
+
+def _clear_token_state():
+    try:
+        TOKEN_STATE.unlink()
+    except Exception:
+        pass
+
+
+def _check_token_fresh(now=None):
+    """Raise TokenStaleError while the app hasn't rotated an expired token yet,
+    AuthenticationError once the app has evidently failed to rotate it."""
+    now = time.time() if now is None else now
+    tok = _access_token()
+    exp = _token_exp(tok)
+    if exp is None or exp - now > EXPIRY_MARGIN_S:
+        _clear_token_state()
+        return
+    stale_s = _expired_for_awake_s(tok, now)
+    if stale_s >= STALE_ALARM_S and _app_running():
+        raise AuthenticationError(
+            "Kimi 认证失效：Kimi App 已 %d 分钟没续上通行证" % (stale_s // 60))
+    raise TokenStaleError("等待 Kimi App 刷新通行证")
 
 
 def _curl(url, payload, timeout=20):
     last_detail = ""
+    last_token = None
     for attempt in range(REQUEST_ATTEMPTS):
+        # Re-read the token on every attempt: the desktop app rotates the
+        # 15-minute JWT asynchronously, so a 401 often just means we caught
+        # the config mid-rotation — the fresh token may already be on disk.
+        token = _access_token()
         p = subprocess.run(
             ["curl", "-sS", "-m", str(timeout), "-X", "POST", url,
-             "-H", "Authorization: Bearer %s" % _access_token(),
+             "-H", "Authorization: Bearer %s" % token,
              "-H", "Content-Type: application/json",
              "-H", "X-Msh-Platform: web",
              "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -91,6 +178,13 @@ def _curl(url, payload, timeout=20):
         status = int(status_text.strip() or 0) if marker else 0
         body = body.rstrip("\n") if marker else p.stdout
         if status == 401:
+            # Only a 401 with an UNCHANGED token proves login expiry. If the
+            # desktop has since written a new token, retry with it first.
+            if token != last_token and attempt + 1 < REQUEST_ATTEMPTS:
+                last_detail = "401, token rotated, retrying with fresh token"
+                last_token = token
+                time.sleep(RETRY_DELAYS_S[attempt])
+                continue
             raise AuthenticationError("Kimi 认证失效 (HTTP 401)")
         if status == 200:
             try:
@@ -212,6 +306,15 @@ def fetch_usage(force=False):
         prev = _last_good()
         if prev is not None:
             return prev
+    try:
+        # Checked before touching STAMP so the next tick retries as soon as
+        # the app has written a fresh token.
+        _check_token_fresh()
+    except TokenStaleError:
+        prev = _last_good()
+        if prev is not None:
+            return prev
+        raise
     STAMP.write_text("")
     try:
         j = _curl(USAGES_ENDPOINT, {"scope": ["FEATURE_CODING"]})

@@ -7,6 +7,7 @@ Defensive field parsing; degrades to a muted text state on any error. No tokens.
 """
 import base64
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -107,7 +108,7 @@ def window_stats(used, reset, span_s, now):
     else:
         time_pct, rem_txt = None, "—"
     verdict, vcol = verdict_of(used, time_pct)
-    return {"used": used, "time": time_pct, "rem": rem_txt,
+    return {"used": used, "time": time_pct, "rem": rem_txt, "reset": reset,
             "ucol": imggen.pace_color(used or 0, time_pct),
             "verdict": verdict, "vcol": vcol}
 
@@ -160,6 +161,22 @@ def codex_windows(data):
     convert("primary")
     convert("secondary")
     return windows
+
+
+def send_usage_alerts(windows, now, dry_run=False):
+    """任一窗口用满 100% 时发飞书推送；推送出任何问题都不能影响菜单栏显示。"""
+    try:
+        import usage_alerts
+        items = []
+        for name, window, st in windows:
+            if st is None:
+                continue
+            reset = st.get("reset")
+            items.append({"key": "%s|%s" % (name, window), "name": name,
+                          "window": window, "used": st["used"], "reset": reset})
+        usage_alerts.check(items, now=now, dry_run=dry_run)
+    except Exception:
+        pass
 
 
 def main():
@@ -221,6 +238,12 @@ def main():
         span_s = (kc_reset - kc_start) if (kc_reset and kc_start and kc_reset > kc_start) \
             else 30 * 86400
         kimi_cycle = window_stats(kc_used, kc_reset, span_s, now)
+
+    send_usage_alerts(
+        (("Claude", "5 小时", five), ("Claude", "7 天", seven),
+         ("Codex", "5 小时", codex_five), ("Codex", "7 天", codex_seven),
+         ("Kimi", "5 小时", kimi_five), ("Kimi", "订阅周期(30 天)", kimi_cycle)),
+        now, dry_run="--alerts-dry-run" in sys.argv)
 
     mb = imggen.combined_menubar_icon(
         ((five or {}).get("used"), (five or {}).get("time")),

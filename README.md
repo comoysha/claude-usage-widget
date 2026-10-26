@@ -208,6 +208,10 @@ python3 window_log.py
 | `window_log.jsonl` / `window_log.md` | 窗口终点用量日志（原始 / 人看）|
 | `window_state.json` | 各窗口当前进行中的状态（供封窗检测）|
 
+## 额度用满飞书推送
+任一订阅（Claude / Codex / Kimi）的任一窗口（5 小时、7 天、订阅周期 30 天）用量到 100%，会往飞书群发一张卡片；同一个窗口在同一个重置周期内只发一次；窗口重置、用量回落后再发一张绿色的“额度已恢复”卡片。
+配置：复制 `.env.example` 为 `.env`，填入 `FEISHU_NOTIFY_WEBHOOK`（留空 = 不推送）。预览不真发：`python3 render.py --alerts-dry-run`（只打印将要发的内容，不真发、不记状态）。标准见 `docs/feishu-notify-standard.md`。
+
 ## 安全须知
 
 - **只读** Desktop 的 cookie 库和 `Claude Safe Storage` 钥匙串项，从不写回；
