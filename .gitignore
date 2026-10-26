@@ -14,7 +14,6 @@ env/
 .org.json
 .last_attempt
 .kimi_last_attempt
-.kimi_token_state.json
 last_fetch.json
 codex_last_fetch.json
 kimi_last_fetch.json
