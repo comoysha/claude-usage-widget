@@ -100,5 +100,22 @@ class TokenFreshnessTests(unittest.TestCase):
         self.assertNotIn("认证失效", str(cm.exception))
 
 
+class QuotaTests(unittest.TestCase):
+    def test_protobuf_omitted_fields(self):
+        self.assertEqual(k._quota_used_pct({"limit": "100", "used": "100"}), 100.0)
+        self.assertEqual(k._quota_used_pct({"limit": "100", "remaining": "100"}), 0.0)
+        self.assertEqual(k._quota_used_pct({"limit": "100", "used": "8", "remaining": "92"}), 8.0)
+        self.assertEqual(k._quota_used_pct({"limit": "100", "remaining": "90"}), 10.0)
+
+    def test_exhausted_five_hour_window_normalizes(self):
+        data = {"usages": [{"scope": "FEATURE_CODING", "limits": [{
+            "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+            "detail": {"limit": "100", "used": "100", "resetTime": "x"}}]}],
+            "totalQuota": {"limit": "100", "used": "8", "remaining": "92"}}
+        out = k.normalize(data, {})
+        self.assertEqual(out["five_hour"]["utilization"], 100.0)
+        self.assertEqual(out["cycle"]["utilization"], 8.0)
+
+
 if __name__ == "__main__":
     unittest.main()

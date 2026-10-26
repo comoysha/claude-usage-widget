@@ -199,17 +199,25 @@ def _curl(url, payload, timeout=20):
 
 
 def _quota_used_pct(detail):
-    """Kimi reports percent-normalized quotas: limit '100' = 100%."""
+    """Kimi reports percent-normalized quotas: limit '100' = 100%.
+
+    The API is protobuf-JSON, which omits zero-valued fields: an exhausted
+    window comes back as {"limit": "100", "used": "100"} with no "remaining",
+    and an untouched one as {"limit": "100", "remaining": "100"} with no
+    "used". Prefer "used"; otherwise derive it from "remaining" (missing = 0)."""
     if not isinstance(detail, dict):
         return None
     try:
         limit = float(detail.get("limit"))
-        remaining = float(detail.get("remaining"))
+        if detail.get("used") is not None:
+            used = float(detail.get("used"))
+        else:
+            used = limit - float(detail.get("remaining") or 0)
     except (TypeError, ValueError):
         return None
     if limit <= 0:
         return None
-    return max(0.0, min(100.0, (limit - remaining) / limit * 100.0))
+    return max(0.0, min(100.0, used / limit * 100.0))
 
 
 def _window_from_limit(lim):
