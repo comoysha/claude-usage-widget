@@ -327,6 +327,17 @@ def main():
         if kimi_err:
             print("--%s | color=#8E8E93" % str(kimi_err)[:100])
     print("---")
+    try:
+        wd_mode = (HERE / "watchdog_mode.txt").read_text().strip()
+    except Exception:
+        wd_mode = "dry"
+    wd_label = "自动复活" if wd_mode == "apply" else "仅记录不复活"
+    print("任务看门狗：%s" % wd_label)
+    print("--自动复活断掉的任务 | bash=%s/watchdog_set_mode.sh param1=apply terminal=false refresh=true checked=%s"
+          % (HERE, "true" if wd_mode == "apply" else "false"))
+    print("--仅记录，不复活 | bash=%s/watchdog_set_mode.sh param1=dry terminal=false refresh=true checked=%s"
+          % (HERE, "true" if wd_mode != "apply" else "false"))
+    print("---")
     print("立即刷新 | bash=%s/force_refresh.sh terminal=false refresh=true" % HERE)
 
 

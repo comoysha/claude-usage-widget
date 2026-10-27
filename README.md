@@ -221,3 +221,17 @@ python3 window_log.py
 - Codex 分区不读取 `~/.codex/auth.json`；仅从会话 JSONL 中抽取限额字段，不保留对话。
 - Kimi 分区只读 daimon 配置取 accessToken，每次现读现用，**不落明文**、不打印、
   不缓存；不使用 `kimiCode` API Key，也不对 Kimi 桌面端做任何写入。
+
+## 任务看门狗（Multica 断线任务自动复活）
+
+`usage_watchdog.py` 由 launchd 每 15 分钟跑一次（`com.llm-usage.watchdog`）：找出 `in_progress`
+且负责人是 agent、但超过 25 分钟没有活动的 Multica 任务，确认对应供应商（按 agent 绑定的
+runtime 映射到 Claude / Codex / Kimi，用量读本目录的三份快照）5 小时窗口已恢复后，
+重新 assign 触发新 run 复活它。防抖：同一任务 6 小时内最多复活 2 次、间隔至少 1 小时；
+快照超过 15 分钟未刷新按「额度未知」处理不误动。
+
+模式开关在 SwiftBar 菜单底部「任务看门狗」：**自动复活** / **仅记录不复活**（写在
+`watchdog_mode.txt`，`apply` / `dry`；命令行 `--apply` / `--dry` 可临时覆盖）。
+日志在 `logs/watchdog.log`，每次运行自动清理，只保留最近 2 天。
+卸载：`launchctl bootout gui/$(id -u)/com.llm-usage.watchdog` 并删除
+`~/Library/LaunchAgents/com.llm-usage.watchdog.plist`。

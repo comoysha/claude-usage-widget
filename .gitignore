@@ -41,3 +41,7 @@ swiftbar_env.txt
 swiftbar_probe.txt
 
 alert_state.json
+
+# Watchdog runtime state / local mode toggle
+watchdog_state.json
+watchdog_mode.txt
