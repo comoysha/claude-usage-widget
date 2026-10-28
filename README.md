@@ -1,18 +1,19 @@
 # Claude Code + Codex + Kimi Usage Widget
 
 一个 macOS 菜单栏小组件（基于 [SwiftBar](https://github.com/swiftbar/SwiftBar)），
-在同一个 SwiftBar 入口中分区显示 **Claude Code**、**Codex** 与 **Kimi Code** 的
-官方用量，并把「已用用量%」和「已过时间%」并排对比，帮你判断烧钱节奏。同时把
+在同一个 SwiftBar 入口中分区显示 **Claude Code**、**Codex**、**Kimi Code** 与
+**Cursor / Grok** 的官方用量，并把「已用用量%」和「已过时间%」并排对比，帮你判断烧钱节奏。同时把
 每个窗口终点时的用量记进日志。
 
-Claude 可用时，菜单栏图标为六列（`C5h`、`C7d`、`X5h`、`X7d`、`K5h`、`K30d`），
+Claude 可用时，菜单栏图标最多七列（`C5h`、`C7d`、`X5h`、`X7d`、`K5h`、`K30d`、`G7d`），
 每列两行：**时间% / 用量%**；某一侧不可用时只隐藏该侧的列；
-点开后是三个独立的 iOS 风格分区：Claude Code 保留 5 小时与 7 天窗口；为避免
+点开后是四个独立的 iOS 风格分区：Claude Code 保留 5 小时与 7 天窗口；为避免
 SwiftBar 对过高菜单图片重采样，Claude 的两个窗口分别使用一张 Retina 图片，并用
 菜单分隔线隔开，避免 SwiftBar 2.1.1 把连续的第二张图片从低分辨率中间位图绘制；
 Codex 显示 5 小时（视套餐）与 7 天窗口；Kimi 显示 5 小时窗口与订阅周期窗口
-（约 30 天，即 Kimi 控制台的「总使用量」，重置时间跟随下次续费时间）。
-两侧独立降级：任一侧抓取失败、登录失效或接口返回空用量时，仅该分区显示
+（约 30 天，即 Kimi 控制台的「总使用量」，重置时间跟随下次续费时间）；
+Cursor 显示与 Grok Bot / Grok apps 共用的 **Weekly usage limit**（仅 `G7d`，无 5 小时窗口）。
+各侧独立降级：任一侧抓取失败、登录失效或接口返回空用量时，仅该分区显示
 “重新登录/无数据”，其余分区仍正常刷新和展示。
 每张进度图会在 SwiftBar 输出里显式携带 Retina 点尺寸，并保持为单窗口高度，避免
 SwiftBar 2.1+ 在 macOS 26 上把未声明尺寸的下拉图片压缩成 `16×16` 图标，或对 Claude
@@ -28,10 +29,12 @@ SwiftBar 每 5 分钟触发一次 [`plugins/claude-usage.5m.sh`](plugins/claude-
    `codex_last_fetch.json`；
 3. 跑 [`fetch_kimi_usage.py`](fetch_kimi_usage.py) 调 Kimi 官网计费接口抓 Kimi Code
    用量，写入 `kimi_last_fetch.json`；
-4. 跑 [`render.py`](render.py)，把三份数据生成同一个 SwiftBar 菜栏入口与三个分区。
+4. 跑 [`fetch_cursor_usage.py`](fetch_cursor_usage.py) 用 Cursor 桌面端 accessToken
+   抓 Weekly usage limit，写入 `cursor_last_fetch.json`；
+5. 跑 [`render.py`](render.py)，把四份数据生成同一个 SwiftBar 菜栏入口与四个分区。
 
-两份本次结果文件都用同目录临时文件写入，再原子替换到 `last_fetch.json` /
-`codex_last_fetch.json` / `kimi_last_fetch.json`。这样自动刷新、手动“立即刷新”和
+本次结果文件都用同目录临时文件写入，再原子替换到 `last_fetch.json` /
+`codex_last_fetch.json` / `kimi_last_fetch.json` / `cursor_last_fetch.json`。这样自动刷新、手动“立即刷新”和
 SwiftBar 自己的重跑即使短暂重叠，读方也不会看到半截 JSON 或空文件。
 
 时间% 由 `render.py` 在每个 tick 本地重算，倒计时随之更新，因此显示始终是「活」的，
@@ -75,7 +78,25 @@ Kimi 分区走 Kimi 官网的 Connect-RPC 网关，与 kimi.com 设置页和 Kim
    注意：老套餐的 7 天周限额在新控制台已不再展示，本组件也不映射它。
 
 accessToken 过期后由 Kimi 桌面端自动刷新；若桌面端退出登录，Kimi 分区会显示
-“重新登录”，不影响 Claude / Codex 分区。
+“重新登录”，不影响 Claude / Codex / Cursor 分区。
+
+### Cursor / Grok 数据来源
+
+Cursor Premium（The X Subscription）的 **Weekly usage limit** 是一个与 Grok Bot /
+Grok apps 共用的周池，编辑器设置页与 `grok.com/dashboard` Usage 同源；**没有 5 小时窗口**，
+本组件只映射为 `G7d`：
+
+1. 从 Cursor 桌面端 VS Code 状态库
+   （`~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`）
+   只读取出 `cursorAuth/accessToken`（JWT）。令牌现读现用，**不落明文、不打印、不写回 DB**。
+2. `POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
+   拿到 `planUsage.totalPercentUsed`（与 UI「10% used」同一字段，按百分数直接读）与
+   `billingCycleStart` / `billingCycleEnd`；
+   再调 `GetPlanInfo` 确认 `includedUsagePeriod=INCLUDED_USAGE_PERIOD_WEEKLY` 与
+   `includedUsageResetsAt`。
+3. 时间% 用本周 `starts_at`→`resets_at` 跨度计算（通常正好 7 天）。
+
+若 Cursor 退出登录或 token 失效，Cursor 分区显示“重新登录”，不影响其它分区。
 
 ### 凭据模型（重要）
 
@@ -186,6 +207,7 @@ python3 window_log.py
    一次请求（Codex 分区才会产生本地限额快照）
 6. **确保 Kimi 桌面端（Kimi Work）已登录**（Kimi 分区的 accessToken 来源；
    桌面端常驻运行时令牌自动保活）
+7. **确保 Cursor 已登录**（Cursor / Grok 分区读本地 `cursorAuth/accessToken`）
 
 ## 文件一览
 
@@ -195,7 +217,8 @@ python3 window_log.py
 | `fetch_usage.py` | 解密 Desktop cookie，调 claude.ai 用量接口；限流节流 |
 | `fetch_codex_usage.py` | 只读 Codex 本地会话中的官方限额快照，不读取凭据 |
 | `fetch_kimi_usage.py` | 复用 Kimi 桌面端网页会话，调官网计费接口；限流节流 |
-| `render.py` | 读三侧缓存，生成共用菜单栏 + 三个独立面板 |
+| `fetch_cursor_usage.py` | 只读 Cursor accessToken，调 api2 Weekly usage；限流节流 |
+| `render.py` | 读四侧缓存，生成共用菜单栏 + 四个独立面板 |
 | `imggen.py` | 把菜单栏图标与面板画成 iOS 风格 PNG（2x 视网膜）|
 | `window_log.py` | 记录每个窗口终点用量，输出 JSONL + MD 日志 |
 | `diag.py` | 只读排错工具（不打印任何密钥）|
@@ -203,13 +226,14 @@ python3 window_log.py
 | `last_fetch.json` | 本次 tick 的抓取结果（成功数据或错误）|
 | `codex_last_fetch.json` | 本次 tick 读取到的 Codex 限额快照或错误 |
 | `kimi_last_fetch.json` | 本次 tick 读取到的 Kimi 用量快照或错误 |
+| `cursor_last_fetch.json` | 本次 tick 读取到的 Cursor weekly 用量或错误 |
 | `.org.json` | 缓存的聊天组织 UUID（非机密）|
-| `.last_attempt` / `.kimi_last_attempt` | 节流触碰文件，把真实请求限到每 5 分钟一次 |
+| `.last_attempt` / `.kimi_last_attempt` / `.cursor_last_attempt` | 节流触碰文件，把真实请求限到每 5 分钟一次 |
 | `window_log.jsonl` / `window_log.md` | 窗口终点用量日志（原始 / 人看）|
 | `window_state.json` | 各窗口当前进行中的状态（供封窗检测）|
 
 ## 额度用满飞书推送
-任一订阅（Claude / Codex / Kimi）的任一窗口（5 小时、7 天、订阅周期 30 天）用量到 100%，会往飞书群发一张卡片；同一个窗口在同一个重置周期内只发一次；窗口重置、用量回落后再发一张绿色的“额度已恢复”卡片。
+任一订阅（Claude / Codex / Kimi / Cursor）的任一窗口（5 小时、7 天、订阅周期 30 天）用量到 100%，会往飞书群发一张卡片；同一个窗口在同一个重置周期内只发一次；窗口重置、用量回落后再发一张绿色的“额度已恢复”卡片。
 配置：复制 `.env.example` 为 `.env`，填入 `FEISHU_NOTIFY_WEBHOOK`（留空 = 不推送）。预览不真发：`python3 render.py --alerts-dry-run`（只打印将要发的内容，不真发、不记状态）。标准见 `docs/feishu-notify-standard.md`。
 
 ## 安全须知
@@ -221,6 +245,8 @@ python3 window_log.py
 - Codex 分区不读取 `~/.codex/auth.json`；仅从会话 JSONL 中抽取限额字段，不保留对话。
 - Kimi 分区只读 daimon 配置取 accessToken，每次现读现用，**不落明文**、不打印、
   不缓存；不使用 `kimiCode` API Key，也不对 Kimi 桌面端做任何写入。
+- Cursor 分区只读 `state.vscdb` 的 `cursorAuth/accessToken`，每次现读现用，
+  **不落明文**、不打印、不写回；也不碰 refreshToken。
 
 ## 任务看门狗（Multica 断线任务自动复活）
 

@@ -35,8 +35,11 @@ codex_rc=$?
 # session; --force bypasses its 5-minute throttle like the Claude fetch above.
 write_json_atomically "$DIR/kimi_last_fetch.json" python3 "$DIR/fetch_kimi_usage.py" --force 2>>"$LOG"
 kimi_rc=$?
+# Cursor / Grok weekly pool; --force bypasses the same 5-minute throttle.
+write_json_atomically "$DIR/cursor_last_fetch.json" python3 "$DIR/fetch_cursor_usage.py" --force 2>>"$LOG"
+cursor_rc=$?
 # Heartbeat so a click always leaves a trace (helps diagnose if it ever misbehaves again).
-echo "$(TZ=Asia/Shanghai date '+%F %T') Asia/Shanghai (UTC+8) force_refresh claude_rc=$rc codex_rc=$codex_rc kimi_rc=$kimi_rc bytes=$(wc -c < "$DIR/last_fetch.json" | tr -d ' ')" >> "$LOG"
+echo "$(TZ=Asia/Shanghai date '+%F %T') Asia/Shanghai (UTC+8) force_refresh claude_rc=$rc codex_rc=$codex_rc kimi_rc=$kimi_rc cursor_rc=$cursor_rc bytes=$(wc -c < "$DIR/last_fetch.json" | tr -d ' ')" >> "$LOG"
 # Keep the log from growing without bound.
 tail -n 50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
 # Either side may be temporarily unavailable; SwiftBar should still render the other.

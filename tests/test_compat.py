@@ -203,6 +203,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
                 mock.patch.object(render, "KIMI_RAW", codex),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen,
@@ -259,6 +260,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
                 mock.patch.object(render, "KIMI_RAW", codex),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen,
@@ -316,6 +318,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
                 mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="image-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon", return_value=root / "menubar.png"
@@ -367,6 +370,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", codex),
                 mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="image-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon", return_value=root / "menubar.png"
@@ -475,6 +479,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
                 mock.patch.object(render, "KIMI_RAW", kimi),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon",
@@ -519,6 +524,7 @@ class RenderCompatibilityTests(unittest.TestCase):
                 mock.patch.object(render, "CACHE", claude),
                 mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
                 mock.patch.object(render, "KIMI_RAW", kimi),
+                mock.patch.object(render, "CURSOR_RAW", root / "missing-cursor.json"),
                 mock.patch.object(render, "b64", return_value="menubar-data"),
                 mock.patch.object(
                     render.imggen, "combined_menubar_icon",
@@ -536,6 +542,123 @@ class RenderCompatibilityTests(unittest.TestCase):
             self.assertIn("Kimi · 重新登录", output.getvalue())
             self.assertIsNone(menubar.call_args.kwargs["kimi_five"])
             self.assertIsNone(menubar.call_args.kwargs["kimi_cycle"])
+
+    def test_cursor_weekly_gets_g7d_column_and_panel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            cursor = root / "cursor_last_fetch.json"
+            claude.write_text(json.dumps({"five_hour": None}))
+            now = datetime.now(timezone.utc)
+            start = (now - timedelta(days=1)).isoformat()
+            reset = (now + timedelta(days=6)).isoformat()
+            cursor.write_text(json.dumps({
+                "seven_day": {"utilization": 9.81581798483207,
+                              "resets_at": reset, "starts_at": start},
+                "plan": "Premium",
+                "included_usage_period": "weekly",
+            }))
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
+                mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
+                mock.patch.object(render, "CURSOR_RAW", cursor),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen, "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ) as menubar,
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: root / args[3],
+                ) as panel,
+                mock.patch.object(
+                    render,
+                    "panel_image_line",
+                    side_effect=lambda path: "PANEL:" + path.name,
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn("PANEL:cursor_panel.png", output.getvalue())
+            used, elapsed = menubar.call_args.kwargs["cursor_seven"]
+            self.assertAlmostEqual(9.81581798483207, used)
+            # 1 of 7 days elapsed ≈ 14%.
+            self.assertAlmostEqual(100.0 / 7.0, elapsed, delta=1.0)
+            self.assertEqual("Cursor", panel.call_args.args[2])
+            self.assertEqual("Weekly usage limit", panel.call_args.kwargs["seven_title"])
+
+    def test_cursor_auth_failure_shows_muted_row_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude = root / "last_fetch.json"
+            cursor = root / "cursor_last_fetch.json"
+            claude.write_text(json.dumps({"five_hour": None}))
+            cursor.write_text(json.dumps({"error": "Cursor 认证失效 (HTTP 401)"}))
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(render, "RAW", claude),
+                mock.patch.object(render, "CACHE", claude),
+                mock.patch.object(render, "CODEX_RAW", root / "missing-codex.json"),
+                mock.patch.object(render, "KIMI_RAW", root / "missing-kimi.json"),
+                mock.patch.object(render, "CURSOR_RAW", cursor),
+                mock.patch.object(render, "b64", return_value="menubar-data"),
+                mock.patch.object(
+                    render.imggen, "combined_menubar_icon",
+                    return_value=root / "menubar.png",
+                ) as menubar,
+                mock.patch.object(
+                    render.imggen,
+                    "panel",
+                    side_effect=lambda *args, **kwargs: make_panel(root / "p.png"),
+                ),
+                redirect_stdout(output),
+            ):
+                render.main()
+
+            self.assertIn("Cursor · 重新登录", output.getvalue())
+            self.assertIsNone(menubar.call_args.kwargs.get("cursor_seven"))
+
+    def test_menubar_icon_adds_g7d_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(imggen, "HERE", Path(tmp)):
+                with_g = imggen.combined_menubar_icon(
+                    (10, 20), (30, 40), (16, 27), show_claude=True,
+                    cursor_seven=(9.8, 14),
+                )
+                with Image.open(with_g) as image:
+                    self.assertEqual((296, 44), image.size)
+
+
+class CursorFetchTests(unittest.TestCase):
+    def test_normalize_maps_weekly_percent_and_ms_reset(self):
+        import fetch_cursor_usage as fcu
+
+        period = {
+            "billingCycleStart": "1793156082693",
+            "billingCycleEnd": "1793760882693",
+            "planUsage": {"totalPercentUsed": 9.81581798483207},
+            "displayMessage": "You've used 10% of your included usage",
+        }
+        plan = {
+            "planInfo": {
+                "planName": "Premium",
+                "includedUsagePeriod": "INCLUDED_USAGE_PERIOD_WEEKLY",
+                "includedUsageResetsAt": "1793760882693",
+            }
+        }
+        out = fcu.normalize(period, plan)
+        self.assertEqual("Premium", out["plan"])
+        self.assertEqual("weekly", out["included_usage_period"])
+        self.assertAlmostEqual(9.81581798483207, out["seven_day"]["utilization"])
+        self.assertTrue(out["seven_day"]["resets_at"].startswith("2026-11-04"))
+        self.assertTrue(out["seven_day"]["starts_at"].startswith("2026-10-28"))
 
 
 if __name__ == "__main__":

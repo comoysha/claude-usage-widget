@@ -115,13 +115,15 @@ def menubar_icon(used, time_pct, output="menubar.png"):
 
 
 def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=True,
-                          codex_five=None, kimi_five=None, kimi_cycle=None):
+                          codex_five=None, kimi_five=None, kimi_cycle=None,
+                          cursor_seven=None):
     """Compact usage columns; hide Claude columns while Claude is unavailable.
 
     codex_five is optional: Codex only reports a 5-hour window on some plans,
     so its column is dropped rather than shown as "--" when absent. The same
     applies to Kimi's columns: kimi_cycle is the subscription-cycle quota
-    (~30 days) shown in the Kimi console as 总使用量."""
+    (~30 days) shown in the Kimi console as 总使用量. cursor_seven is Cursor /
+    Grok's shared weekly pool (no 5h window) — shown as G7d."""
     S = 2
     font = _font(F_CJK, 7 * S, index=CJK_W6)
     rows = [("C5h", claude_five), ("C7d", claude_seven)] if show_claude else []
@@ -133,6 +135,8 @@ def combined_menubar_icon(claude_five, claude_seven, codex_weekly, show_claude=T
         rows.append(("K5h", kimi_five))
     if kimi_cycle is not None:
         rows.append(("K30d", kimi_cycle))
+    if cursor_seven is not None:
+        rows.append(("G7d", cursor_seven))
     W, H = len(rows) * 37 * S, 22 * S
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)

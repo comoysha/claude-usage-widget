@@ -21,6 +21,7 @@ RAW = HERE / "last_fetch.json"
 CACHE = HERE / "usage_raw.json"
 CODEX_RAW = HERE / "codex_last_fetch.json"
 KIMI_RAW = HERE / "kimi_last_fetch.json"
+CURSOR_RAW = HERE / "cursor_last_fetch.json"
 WINDOW_S = 5 * 3600
 SEVEN_S = 7 * 86400
 
@@ -239,10 +240,27 @@ def main():
             else 30 * 86400
         kimi_cycle = window_stats(kc_used, kc_reset, span_s, now)
 
+    # Cursor / Grok shared weekly pool (Premium "Weekly usage limit"). No 5h.
+    try:
+        cursor_data = json.loads(CURSOR_RAW.read_text())
+    except Exception:
+        cursor_data = None
+    cursor_err = (cursor_data or {}).get("error", "") if isinstance(cursor_data, dict) else ""
+    g_used, g_reset = find_window(cursor_data, ("seven_day", "sevenDay"))
+    g_start = parse_time(
+        ((cursor_data or {}).get("seven_day") or {}).get("starts_at")
+    ) if isinstance(cursor_data, dict) else None
+    cursor_seven = None
+    if g_used is not None and not cursor_err:
+        span_s = (g_reset - g_start) if (g_reset and g_start and g_reset > g_start) \
+            else SEVEN_S
+        cursor_seven = window_stats(g_used, g_reset, span_s, now)
+
     send_usage_alerts(
         (("Claude", "5 小时", five), ("Claude", "7 天", seven),
          ("Codex", "5 小时", codex_five), ("Codex", "7 天", codex_seven),
-         ("Kimi", "5 小时", kimi_five), ("Kimi", "订阅周期(30 天)", kimi_cycle)),
+         ("Kimi", "5 小时", kimi_five), ("Kimi", "订阅周期(30 天)", kimi_cycle),
+         ("Cursor", "7 天", cursor_seven)),
         now, dry_run="--alerts-dry-run" in sys.argv)
 
     mb = imggen.combined_menubar_icon(
@@ -253,6 +271,7 @@ def main():
         codex_five=(codex_five["used"], codex_five["time"]) if codex_five else None,
         kimi_five=(kimi_five["used"], kimi_five["time"]) if kimi_five else None,
         kimi_cycle=(kimi_cycle["used"], kimi_cycle["time"]) if kimi_cycle else None,
+        cursor_seven=(cursor_seven["used"], cursor_seven["time"]) if cursor_seven else None,
     )
 
     print(" | image=%s" % b64(mb))
@@ -326,6 +345,18 @@ def main():
         print("Kimi · %s | color=#8E8E93" % label)
         if kimi_err:
             print("--%s | color=#8E8E93" % str(kimi_err)[:100])
+    print("---")
+    if cursor_seven:
+        cursor_panel = imggen.panel(
+            None, cursor_seven, "Cursor", "cursor_panel.png",
+            only_weekly=True, seven_title="Weekly usage limit",
+        )
+        print(panel_image_line(cursor_panel))
+    else:
+        label = "重新登录" if "认证失效" in str(cursor_err) else "无数据"
+        print("Cursor · %s | color=#8E8E93" % label)
+        if cursor_err:
+            print("--%s | color=#8E8E93" % str(cursor_err)[:100])
     print("---")
     try:
         wd_mode = (HERE / "watchdog_mode.txt").read_text().strip()
