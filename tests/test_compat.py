@@ -660,6 +660,34 @@ class CursorFetchTests(unittest.TestCase):
         self.assertTrue(out["seven_day"]["resets_at"].startswith("2026-11-04"))
         self.assertTrue(out["seven_day"]["starts_at"].startswith("2026-10-28"))
 
+    def test_decrypt_passes_through_legacy_plaintext_jwt(self):
+        import fetch_cursor_usage as fcu
+
+        jwt = "aaa.bbb.ccc"
+        self.assertEqual(jwt, fcu._decrypt_safe_storage(jwt))
+
+    def test_decrypt_roundtrips_v10_safe_storage_blob(self):
+        import base64
+        import hashlib
+        import subprocess
+        from unittest import mock
+
+        import fetch_cursor_usage as fcu
+
+        plain = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1In0.sig"
+        key = "test-cursor-safe-storage-key"
+        dk = hashlib.pbkdf2_hmac("sha1", key.encode(), b"saltysalt", 1003, 16)
+        pad = 16 - (len(plain) % 16)
+        padded = plain.encode() + bytes([pad]) * pad
+        enc = subprocess.check_output(
+            ["openssl", "enc", "-e", "-aes-128-cbc",
+             "-K", dk.hex(), "-iv", "20" * 16, "-nopad"],
+            input=padded,
+        )
+        blob = fcu.SAFE_STORAGE_PREFIX + base64.b64encode(b"v10" + enc).decode()
+        with mock.patch.object(fcu, "_safe_storage_key", return_value=key):
+            self.assertEqual(plain, fcu._decrypt_safe_storage(blob))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,9 +5,13 @@ Cursor Premium (The X Subscription) exposes one weekly included-usage pool
 shared across Cursor, Grok Bot, and the Grok apps — the same bar the editor
 shows as "Weekly usage limit". There is no 5-hour window.
 
-Auth is the desktop session JWT already stored in Cursor's VS Code state DB
-(``cursorAuth/accessToken``). We open that DB read-only, never print the
-token, and never write the DB.
+Auth is the desktop session JWT stored in Cursor's VS Code state DB
+(``cursorAuth/accessToken``). Recent Cursor builds encrypt that value at rest
+as ``cursor-safe-storage:v1:`` + base64(Chromium v10 AES), using the macOS
+keychain item ``Cursor Safe Storage`` — same scheme as Claude Desktop cookies.
+We decrypt in memory, never print the token, and never write the DB. The JWT
+itself is long-lived (no refresh needed); we intentionally do not touch
+``cursorAuth/refreshToken``.
 
 Calls (same Connect-RPC the editor uses against ``api2.cursor.sh``):
 
@@ -27,6 +31,8 @@ Normalized payload matches the other fetchers so ``render.find_window`` works:
 Throttled to one real call per MIN_FETCH_S; transient failures reuse the last
 good ``cursor_last_fetch.json``. ``--force`` bypasses the throttle.
 """
+import base64
+import hashlib
 import json
 import sqlite3
 import subprocess
@@ -40,6 +46,8 @@ RAW = HERE / "cursor_last_fetch.json"
 STAMP = HERE / ".cursor_last_attempt"
 STATE_DB = (Path.home() / "Library/Application Support/Cursor/User/"
             "globalStorage/state.vscdb")
+SAFE_STORAGE_SVC = "Cursor Safe Storage"  # Electron safeStorage keychain item
+SAFE_STORAGE_PREFIX = "cursor-safe-storage:v1:"
 API_BASE = "https://api2.cursor.sh/aiserver.v1.DashboardService"
 PERIOD_URL = API_BASE + "/GetCurrentPeriodUsage"
 PLAN_URL = API_BASE + "/GetPlanInfo"
@@ -62,8 +70,58 @@ class AuthenticationError(RuntimeError):
     """An explicit HTTP authentication failure."""
 
 
+def _safe_storage_key():
+    """Electron safeStorage password from the keychain (READ ONLY)."""
+    try:
+        return subprocess.check_output(
+            ["security", "find-generic-password", "-s", SAFE_STORAGE_SVC, "-w"],
+            text=True,
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        raise AuthenticationError(
+            "Cursor 认证失效：读不到 Cursor Safe Storage 钥匙串项（重新登录 Cursor）"
+        ) from e
+
+
+def _decrypt_safe_storage(blob):
+    """Decrypt a ``cursor-safe-storage:v1:`` value → plaintext JWT.
+
+    Layout matches Electron ``safeStorage.encryptString`` on macOS: Chromium
+    v10 AES-128-CBC with PBKDF2-HMAC-SHA1(key, salt=``saltysalt``, 1003, 16),
+    IV = 16 spaces. Older Cursor builds stored the JWT in plaintext — those
+    pass through unchanged.
+    """
+    if not isinstance(blob, str) or not blob:
+        return ""
+    if not blob.startswith(SAFE_STORAGE_PREFIX):
+        return blob  # legacy plaintext
+    try:
+        raw = base64.b64decode(blob[len(SAFE_STORAGE_PREFIX):], validate=False)
+    except Exception as e:
+        raise AuthenticationError("Cursor 认证失效：accessToken 密文损坏") from e
+    if not raw.startswith(b"v10"):
+        raise AuthenticationError("Cursor 认证失效：accessToken 不是 v10 密文")
+    key = _safe_storage_key()
+    dk = hashlib.pbkdf2_hmac("sha1", key.encode(), b"saltysalt", 1003, 16)
+    p = subprocess.run(
+        ["openssl", "enc", "-d", "-aes-128-cbc",
+         "-K", dk.hex(), "-iv", "20" * 16, "-nopad"],
+        input=raw[3:], capture_output=True,
+    )
+    pt = p.stdout
+    if not pt:
+        raise AuthenticationError(
+            "Cursor 认证失效：accessToken 解密失败（钥匙串密钥不匹配？）"
+        )
+    pt = pt[:-pt[-1]]  # PKCS7
+    try:
+        return pt.decode()
+    except Exception as e:
+        raise AuthenticationError("Cursor 认证失效：解密结果不是 UTF-8") from e
+
+
 def _access_token():
-    """Read Cursor's desktop access JWT (READ ONLY). Never printed."""
+    """Read + decrypt Cursor's desktop access JWT (READ ONLY). Never printed."""
     if not STATE_DB.exists():
         raise AuthenticationError("Cursor 认证失效：找不到本地登录状态（先登录 Cursor）")
     try:
@@ -80,7 +138,10 @@ def _access_token():
     tok = (row[0] if row else None) or ""
     if not isinstance(tok, str) or not tok.strip():
         raise AuthenticationError("Cursor 认证失效：本地没有 accessToken（重新登录 Cursor）")
-    return tok.strip()
+    plain = _decrypt_safe_storage(tok.strip())
+    if not plain or plain.count(".") != 2:
+        raise AuthenticationError("Cursor 认证失效：解密后不是有效 JWT（重新登录 Cursor）")
+    return plain
 
 
 def _post(url, token, payload=None, timeout=20):

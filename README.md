@@ -88,7 +88,11 @@ Grok apps 共用的周池，编辑器设置页与 `grok.com/dashboard` Usage 同
 
 1. 从 Cursor 桌面端 VS Code 状态库
    （`~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`）
-   只读取出 `cursorAuth/accessToken`（JWT）。令牌现读现用，**不落明文、不打印、不写回 DB**。
+   只读取出 `cursorAuth/accessToken`。新版 Cursor 会把该值加密成
+   `cursor-safe-storage:v1:` + base64(Chromium v10 AES)，密钥在钥匙串
+   `Cursor Safe Storage`——与 Claude Desktop cookie 同一套方案；旧版明文 JWT
+   直接透传。解密后的令牌现用现弃，**不落明文、不打印、不写回 DB**，也不碰
+   `refreshToken`（JWT 本身是长寿命的，不像 Kimi 那 15 分钟 access）。
 2. `POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
    拿到 `planUsage.totalPercentUsed`（与 UI「10% used」同一字段，按百分数直接读）与
    `billingCycleStart` / `billingCycleEnd`；
@@ -96,7 +100,7 @@ Grok apps 共用的周池，编辑器设置页与 `grok.com/dashboard` Usage 同
    `includedUsageResetsAt`。
 3. 时间% 用本周 `starts_at`→`resets_at` 跨度计算（通常正好 7 天）。
 
-若 Cursor 退出登录或 token 失效，Cursor 分区显示“重新登录”，不影响其它分区。
+若 Cursor 退出登录或解密/鉴权失败，Cursor 分区显示“重新登录”，不影响其它分区。
 
 ### 凭据模型（重要）
 
@@ -245,8 +249,9 @@ python3 window_log.py
 - Codex 分区不读取 `~/.codex/auth.json`；仅从会话 JSONL 中抽取限额字段，不保留对话。
 - Kimi 分区只读 daimon 配置取 accessToken，每次现读现用，**不落明文**、不打印、
   不缓存；不使用 `kimiCode` API Key，也不对 Kimi 桌面端做任何写入。
-- Cursor 分区只读 `state.vscdb` 的 `cursorAuth/accessToken`，每次现读现用，
-  **不落明文**、不打印、不写回；也不碰 refreshToken。
+- Cursor 分区只读 `state.vscdb` 的 `cursorAuth/accessToken`，必要时用钥匙串
+  `Cursor Safe Storage` 解密，每次现解现用，**不落明文**、不打印、不写回；
+  也不碰 refreshToken。
 
 ## 任务看门狗（Multica 断线任务自动复活）
 
