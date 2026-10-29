@@ -256,10 +256,13 @@ python3 window_log.py
 ## 任务看门狗（Multica 断线任务自动复活）
 
 `usage_watchdog.py` 由 launchd 每 15 分钟跑一次（`com.llm-usage.watchdog`）：找出 `in_progress`
-且负责人是 agent、但超过 25 分钟没有活动的 Multica 任务，确认对应供应商（按 agent 绑定的
-runtime 映射到 Claude / Codex / Kimi，用量读本目录的三份快照）5 小时窗口已恢复后，
-重新 assign 触发新 run 复活它。防抖：同一任务 6 小时内最多复活 2 次、间隔至少 1 小时；
+且负责人是 agent、但超过 25 分钟没有活动的 Multica 任务，确认最近一次运行由当前 agent
+执行且因供应商额度耗尽失败，并且没有活跃运行。对应供应商（按 agent 绑定的 runtime 映射到
+Claude / Codex / Kimi，用量读本目录的三份快照）5 小时窗口恢复后，调用 `multica issue rerun`
+创建新运行；只有取得新运行 ID 才记为复活成功。防抖：同一任务 6 小时内最多复活 2 次、间隔至少 1 小时；
 快照超过 15 分钟未刷新按「额度未知」处理不误动。
+如果用户已回复「等我回答」任务、回复触发的 agent 运行因额度耗尽失败，而任务仍归用户，
+看门狗会在额度恢复后交回该 agent 并启动新运行，再移除「等我回答」标签。
 
 模式开关在 SwiftBar 菜单底部「任务看门狗」：**自动复活** / **仅记录不复活**（写在
 `watchdog_mode.txt`，`apply` / `dry`；命令行 `--apply` / `--dry` 可临时覆盖）。

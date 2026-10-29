@@ -6,7 +6,7 @@
 - 任务与 agent：multica CLI
 
 默认 dry-run：只把「会复活哪些任务」写进 logs/watchdog.log，不做任何改动。
-加 --apply 才真正执行 multica issue assign 复活。
+加 --apply 才真正执行 multica issue rerun 复活。
 """
 
 import json
@@ -130,6 +130,47 @@ def can_revive(state, issue_id: str, now: datetime):
     return True, ""
 
 
+def quota_failed_run(issue: dict):
+    """只复活当前负责 agent 的最近一次额度失败；活跃运行一律不碰。"""
+    runs = run_multica("issue", "runs", issue["id"])
+    if not isinstance(runs, list):
+        return False, "执行记录不可读"
+    if any(r.get("status") in {"queued", "dispatched", "running", "waiting_local_directory"} for r in runs):
+        return False, "已有运行中的任务"
+    if not runs:
+        return False, "无执行记录"
+    latest = max(runs, key=lambda r: r.get("created_at") or "")
+    if latest.get("agent_id") != issue.get("assignee_id"):
+        return False, "最近运行的 agent 与当前负责人不符"
+    if latest.get("status") != "failed" or latest.get("failure_reason") != "agent_error.provider_quota_limit":
+        return False, "最近运行并非额度耗尽失败"
+    return True, ""
+
+
+def answered_question_failure(issue: dict):
+    """识别用户已回复、但回复触发的运行因额度失败且任务仍归用户的情况。"""
+    detail = run_multica("issue", "get", issue["id"])
+    if not isinstance(detail, dict) or detail.get("assignee_type") != "member":
+        return None
+    labels = detail.get("labels") or []
+    question = next((l for l in labels if isinstance(l, dict) and l.get("name") == "等我回答"), None)
+    if not question:
+        return None
+    runs = run_multica("issue", "runs", issue["id"])
+    if not isinstance(runs, list) or not runs:
+        return None
+    if any(r.get("status") in {"queued", "dispatched", "running", "waiting_local_directory"} for r in runs):
+        return None
+    latest = max(runs, key=lambda r: r.get("created_at") or "")
+    if (latest.get("status") != "failed"
+            or latest.get("failure_reason") != "agent_error.provider_quota_limit"
+            or latest.get("kind") != "comment"
+            or not latest.get("trigger_comment_id")
+            or (latest.get("attribution") or {}).get("initiator", {}).get("id") != issue.get("assignee_id")):
+        return None
+    return latest["agent_id"], question["id"], latest["id"]
+
+
 MODE_FILE = BASE / "watchdog_mode.txt"  # apply=自动复活, dry=只记录
 LOG_KEEP_DAYS = 2
 
@@ -198,15 +239,19 @@ def main():
     candidates = 0
 
     for issue in issues:
-        if issue.get("assignee_type") != "agent":
-            continue
-        agent_id = issue.get("assignee_id")
-        provider = agent_provider.get(agent_id)
-        if provider not in PROVIDER_SNAPSHOT:
+        assignee_type = issue.get("assignee_type")
+        if assignee_type not in {"agent", "member"}:
             continue
         last_active = parse_ts(issue.get("last_activity_at"))
         if not last_active or last_active > stall_cutoff:
             continue  # 还在活跃，正常跑着
+        answered = answered_question_failure(issue) if assignee_type == "member" else None
+        if assignee_type == "member" and not answered:
+            continue
+        agent_id = answered[0] if answered else issue.get("assignee_id")
+        provider = agent_provider.get(agent_id)
+        if provider not in PROVIDER_SNAPSHOT:
+            continue
         candidates += 1
         stalled_min = (now - last_active).total_seconds() / 60
         ident = issue.get("identifier") or issue["id"]
@@ -219,17 +264,29 @@ def main():
         if not allowed:
             log(f"跳过 {tag}：{reason}")
             continue
+        if not answered:
+            failed_for_quota, reason = quota_failed_run(issue)
+            if not failed_for_quota:
+                log(f"跳过 {tag}：{reason}")
+                continue
         if apply_mode:
-            r = subprocess.run(
-                [MULTICA, "--profile", MULTICA_PROFILE,
-                 "issue", "assign", issue["id"], "--to-id", agent_id],
-                capture_output=True, text=True, timeout=60, cwd=BASE,
-            )
-            if r.returncode == 0:
-                log(f"已复活 {tag}（{why}）")
-                state.setdefault(issue["id"], {}).setdefault("revives", []).append(now.timestamp())
+            if answered:
+                run_multica("issue", "assign", issue["id"], "--to-id", agent_id)
+                runs = run_multica("issue", "runs", issue["id"])
+                result = next((r for r in runs if r.get("id") != answered[2] and
+                               r.get("agent_id") == agent_id and
+                               r.get("status") in {"queued", "dispatched", "running", "waiting_local_directory"}), None) if isinstance(runs, list) else None
             else:
-                log(f"复活失败 {tag}：{r.stderr.strip()[:200]}")
+                result = run_multica("issue", "rerun", issue["id"])
+            if isinstance(result, dict) and result.get("id") and result.get("status") in {
+                "queued", "dispatched", "running", "waiting_local_directory"
+            }:
+                log(f"已复活 {tag}，新运行={result['id']}（{why}）")
+                state.setdefault(issue["id"], {}).setdefault("revives", []).append(now.timestamp())
+                if answered:
+                    run_multica("issue", "label", "remove", issue["id"], answered[1])
+            else:
+                log(f"复活未确认 {tag}：未取得新运行 ID")
         else:
             log(f"[dry-run] 会复活 {tag}（{why}）")
 
